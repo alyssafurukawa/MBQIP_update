@@ -1,0 +1,394 @@
+---
+title: "hcahps_cah_script"
+author: "alyssa furukawa"
+date: "2024-02-27"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Required packages are loaded below.
+
+```{r}
+#renv::install("alyssafurukawa/FMT2")
+#devtools::install_github("alyssafurukawa/FMT2")
+
+library(FMT2)
+library(gt)
+librarian("reports")
+
+read_simple <- function(file, year=2019){
+  hcahps_measures <- c("Composite 1", "Composite 2", "Composite 3", "Composite 5", "Composite 6", "Composite 7", 
+                       "Q8", "Q9", "Q 21", "Q 22")
+  
+  hcahps_frame <- readxl::read_xlsx(paste0(fmt_folder, "Data/MBQIP Data/", file)) %>%
+    janitor::clean_names() |> 
+     mutate(provider_id= as.numeric(provider_id)) 
+  
+  return(hcahps_frame)
+}
+
+#renv::init()
+```
+
+Load the MOU list which will remove CAHs that shouldn't be included in the data. Use the most recent available MOU list and update the file path accordingly. Use the information from the MOU list to manually create a list of CAHs that currently have signed MOUs but should be excluded for specific quarters. Unlike in the other quarterly reports, this needs to be done manually because of the several missing quarters of HCAHPS data. If a CAH has a signed MOU, but not yet for the current period, we need to have a CAH report for them but they aren't included in the aggregated (state/national) totals. The value of "quarter" will also need to be updated with each report.
+
+```{r}
+quarter <- "2023Q2"
+p3_q <- "2023Q1" 
+p2_q <- "2022Q4"
+p1_q <- "2022Q3"
+lastQ_data <- "MBQIP Reports/Quarterly Reports/HCAHPS/2023 Q1/R/Data/hcahps_2023Q1_2023-10-25.Rdata"
+#^^^^^^ manually update for every report ^^^^^^^^^^^^^^^^^
+
+
+#MOU list, updated to most recent 10_25_23
+list <- readxl::read_xlsx(paste0(fmt_folder, "MBQIP Reports/CAH List with MOU_FMT 1.3.24.xlsx"), sheet = "CAHs with MOU") %>%
+  clean_names() %>%
+  mutate(provider_id= as.numeric(medicare_number)) %>%
+  filter(is.na(medicare_number)==FALSE)
+
+moulist <- list %>%
+  select(provider_id, medicare_number, cah_name, cah_city, cah_state, cahzip)
+ 
+nrow(moulist) 
+## 2023-10-25: 1340
+## 2024-01-30: 1347
+
+no_moulist <- list %>%
+  filter(!is.na(quarterly_measures)) %>%
+  select(provider_id, hcahps=quarterly_measures) %>%
+  mutate(hcahps= str_remove(hcahps, "Start "),
+         hcahps= as.numeric(paste0(str_sub(hcahps, 4), str_sub(hcahps, 2, 3))))
+
+#CAH with no MOU for this period --- can't use their data but need to have a report
+#Even though the HCAHPS data includes multiple periods, only care about MOU from the current period
+#No manual changes needed
+
+nomou_p4 <- no_moulist %>% #7 dec 22: no mou for this quarter, etc, 2 on list -af 
+  filter(hcahps > as.numeric(paste0(str_sub(quarter, end=-3), str_sub(quarter, start=-1)))) %>%
+  select(provider_id) %>% 
+  pull()
+
+nomou_p3 <- no_moulist %>% 
+  filter(hcahps > as.numeric(paste0(str_sub(p3_q, end=-3), str_sub(p3_q, start=-1)))) %>%
+  select(provider_id) %>% 
+  pull()
+
+nomou_p2 <- no_moulist %>% 
+  filter(hcahps > as.numeric(paste0(str_sub(p2_q, end=-3), str_sub(p2_q, start=-1)))) %>%
+  select(provider_id) %>% 
+  pull()
+
+nomou_p1 <- no_moulist %>%  
+  filter(hcahps > as.numeric(paste0(str_sub(p1_q, end=-3), str_sub(p1_q, start=-1)))) %>%
+  select(provider_id) %>% 
+  pull()
+
+#recently closed CAHs, will be removed from previous Q data to prevent report generation
+closed <- c(281321 , 421303 , 151335 , 451345 , 451360 , 441311 ,371324 ,
+231317 , 
+191303 ,
+171340 ,
+151302  ) 
+
+
+hcahps_measures2 <- c("Composite 1", "Composite 2", "Composite 3", "Composite 5", "Composite 6", "Composite 7", 
+                     "Q8", "Q9", "Q18", "Q19") 
+```
+
+This chunk reads in the new HCAHPS data and formats it. It's necessary to reverse the engineer the number of respondents that gave each answer because the data we receive only has the total number of respondents and the percentage that gave each answer. This is a pretty rough process because of the method in which these data are created, so I think it's most accurate to say we're reporting a general estimate rather than the exact value. There are a few addition notes about this in a document in the 2021 Q1 folder. Only the file path to the new data needs to be changed manually. 
+
+```{r}
+st_names <- tibble(cah_state=state.abb, state_name=state.name)
+
+## 2023-10-25: pulled the function here from FMT2 because i needed to force provier_id to be numeric instea of character so it would join with MOU
+
+read_hcahps <- function(file, joinMOU=FALSE){
+  hcahps_measures <- c("Composite 1", "Composite 2", "Composite 3", "Composite 5", "Composite 6", "Composite 7",
+                       "Q8", "Q9", "Q18", "Q19", "Star Rating") #also updated this for new function
+
+  hcahps_data <- readxl::read_xlsx(paste0(fmt_folder, "Data/MBQIP Data/", file)) %>%
+    janitor::clean_names() %>%
+    dplyr::mutate(dplyr::across(sometimes_to_never:star_rating, as.numeric),
+                  provider_id = as.numeric(provider_id) , ## added this because the provider_id wasn't joining with MOU
+           period= 4,
+           resp_rate= as.numeric(h_resp_rate_p)) %>%
+    dplyr::select(-c(textual_completed_surveys, footnotes:h_resp_rate_p))
+
+  if (joinMOU==TRUE){
+    hcahps_frame <- tibble()
+    for (m in hcahps_measures){
+      temp <- moulist %>%
+        dplyr::left_join(
+          hcahps_data %>%
+            dplyr::filter(question_id==m)) %>%
+        dplyr::mutate(question_id= ifelse(is.na(question_id), m, question_id),
+                      completed_surveys= ifelse(is.na(completed_surveys), "N/A", completed_surveys))
+
+      hcahps_frame <- dplyr::bind_rows(hcahps_frame, temp)}
+  } else {
+    hcahps_frame <- hcahps_data %>%
+      dplyr::filter(question_id %in% hcahps_measures)}
+
+  return(hcahps_frame)
+}
+
+hcahps_raw <- read_hcahps("2023/HCAHPS/Q2 2023/HRSA_April_2024_reporting.xlsx", joinMOU= TRUE)
+
+
+hcahps_outcomes <-  readxl::read_xlsx(paste0(fmt_folder, "Data/MBQIP Data/2023/HCAHPS/Q2 2023/HRSA_outcomes_April_2024_reporting.xlsx")) %>% 
+  mutate(provider_id = as.numeric(planname)) %>% 
+  select(-planname)
+
+hcahps_raw <- hcahps_raw %>% 
+  left_join(hcahps_outcomes , by = "provider_id" )
+
+nrow(hcahps_raw) 
+## 13 march 23: 14751
+## 15 may 23: 14784
+## 14 august 23: 14773
+## 2023-10-25: 14740
+
+#Reverse engineer the number of respondents with each answer
+hcahps_new <- hcahps_raw %>%
+  filter(question_id != "Star Rating") %>%
+  mutate(denom= as.numeric(completed_surveys), #some of these arent that close to even numbers.. look more into it?
+         allsent= round(denom/resp_rate*100, digits=0),
+         num_sometimes= sometimes_to_never*denom/100,
+         num_usually= usually*denom/100,
+         num_always= always*denom/100,
+         num_yes= yes*denom/100,
+         num_no= no*denom/100,
+         num_rate06= rating_0_6*denom/100,
+         num_rate78= rating_7_8*denom/100,
+         num_rate910= rating_9_10*denom/100,
+         num_defno= definitely_no*denom/100,
+         num_prob= probably_yes*denom/100,
+         num_defyes= definitely_yes*denom/100) %>%
+  mutate(period=4,
+         quarter= quarter,
+         q_nonreport= ifelse(if_all(.cols= sometimes_to_never:definitely_yes, ~is.na(.)) & completed_surveys != "N/A", 1, 0) ) #,
+         #q_nonreport = case_when(if_all(.cols= sometimes_to_never:definitely_yes, ~is.na(.)) & completed_surveys != "N/A" ~ 1 ,
+                                # Outcome == "Responses to Few" | Outcome == "No Population" ~ 2 ,
+                                # TRUE ~ 0  
+       #  ) ) ## 7 dec 22: 13430 obs -af 
+
+#separate out star ratings to add back later (otherwise bigger change might be necessary)
+star_master <- hcahps_raw %>%
+  filter(question_id=="Star Rating") %>% 
+  select(provider_id, master_star_rating= star_rating)
+```
+
+
+This chunk  reads in the data created for the previous report and combines it with the new data. The reports require the new quarter of data, and the three most recent quarters that can be taken from the last report's master data file. The most recent quarterly data is referred to as "Period 4", the next most recent as "Period 3", and so on, no matter which quarter the data actually comes from. The oldest period of data is dropped and the rest are moved back by one period to make room for the new data. Then the two files are joined. Nothing should need to be manually updated, unless one-time fixes are required.
+
+```{r}
+#load data from previous report
+load(paste0(fmt_folder, lastQ_data))
+## 7 dec 22: if the data isn't loading "cannot open the connection" type error, check to see if the .Rdata got dropped off the end when updating above or that the file path has the correct Q and year  -af 
+
+#adjust periods & drop old data
+previous_qs <- hcahps_master_data %>%
+  select(provider_id:q_nonreport) %>% #updated 5/31/22
+  filter(period != 1) %>% #remove oldest period of data
+  mutate(period= period-1) #move period back 1
+
+#join all quarters- remove any closed CAHs from the old data
+hcahps_cah <- hcahps_new %>% 
+  bind_rows(previous_qs) %>%
+  filter(!(provider_id %in% closed)) %>%
+  mutate(cah_name= str_trim(cah_name)) #remove extra spaces
+  
+
+nrow(hcahps_cah) 
+## 14 august 23: 53660
+## 2023-10-25: 53480
+```
+
+The next chunk generates state and national estimates using the CAH data. CAHs with no MOU are not included in either calculation. If data from previous periods was added for new CAHs above, it may be necessary to exclude those from these calculations so they don't affect them. Otherwise, only the file path of the new data file needs to updated manually. This code would benefit from being adjusted, as discussed in the OPIP reports, given the time and motivation.
+
+```{r}
+hcahps_trim <- hcahps_cah %>% 
+  filter(!(period==4 & provider_id %in% nomou_p4), #remove CAHs w/o MOUs
+         !(period==3 & provider_id %in% nomou_p3),
+         !(period==2 & provider_id %in% nomou_p2),
+         !(period==1 & provider_id %in% nomou_p1)) %>%
+  mutate(denom_adj= ifelse(q_nonreport==1, 0, denom)) #12/15
+#This makes it so that percentages arent thrown off by CAHs that report surveys but nothing for at least one measure
+
+#state estimates
+hcahps_st <- hcahps_trim %>%
+  group_by(cah_state, question_id, period) %>%
+  summarise(st_denom= sum(denom, na.rm = TRUE),
+            st_denom_adj= sum(denom_adj, na.rm = TRUE), #12/15
+            st_allsent= sum(allsent, na.rm = TRUE),
+            across(num_sometimes:num_defyes, ~sum(.x ,na.rm = TRUE), .names = "st_{col}")) %>% ## 2024-01-30: updated code to align with ... being deprecated for "across" in dplyr 1.1 -af 
+  mutate(across(st_num_sometimes:st_num_defyes, ~round(.x/st_denom_adj*100, digits=0), .names = "rate_{col}"), #12/15
+         st_resp_rate= round(st_denom/st_allsent*100, digits=0)) %>%
+  rename_with(~str_remove(.x, "st_num_"), .cols= contains("rate_st")) %>%
+  rename_with(~paste0("st_", .x), .cols= starts_with("rate")) %>%
+  inner_join(st_names, by= "cah_state")
+## 7 dec 22: 1800 obs of 30 variables -af 
+
+#national estimates
+hcahps_nat <- hcahps_trim %>%
+  group_by(question_id, period) %>%
+  summarise(across(num_sometimes:num_defyes, ~sum(.x , na.rm = TRUE), .names = "nat_{col}"),
+            nat_denom= sum(denom, na.rm=TRUE),
+            nat_denom_adj= sum(denom_adj, na.rm = TRUE), #12/15
+            nat_allsent= sum(allsent, na.rm = TRUE)) %>%
+  mutate(across(nat_num_sometimes:nat_num_defyes, ~round(.x/nat_denom_adj*100, digits=0), .names = "rate_{col}"), #12/15
+         nat_resp_rate= round(nat_denom/nat_allsent*100, digits=0)) %>%
+  rename_with(~str_remove(.x, "nat_num_"), .cols= contains("rate_nat")) %>%
+  rename_with(~paste0("nat_", .x), .cols= starts_with("rate"))
+## 7 dec 22: 40 obs of 28 variables -af 
+
+#merge three levels of data
+hcahps_master_data <- hcahps_cah %>%
+  inner_join(hcahps_st, by= c("cah_state", "question_id", "period")) %>%
+  inner_join(hcahps_nat, by= c("question_id", "period")) %>%
+  inner_join(star_master, by= "provider_id") %>%
+  select(-contains("denom_adj")) %>% 
+  mutate(cah_name= str_replace_all(cah_name, "&", "and"),
+         cah_name= str_replace_all(cah_name, "#", "") ,
+        # cah_name= str_replace_all(cah_name, "'", "\\'") , ## seeing if this fixes the apostrophe problem
+          ps_flag= case_when( #used to assign "*" later
+      Outcome == "Responses to Few" | Outcome ==  "No Population" ~ 1, ## 25 april 23: updated from new HCAHPS footnotes and submission data per discussion with Megan -af 
+      TRUE ~ 0)) 
+#These characters are escaped in Latex, which causes an error when they're inserted into the figure titles
+#For now, this changes them to avoid that. There's probably way to actually fix the issue and maintain the
+#original symbols, but I haven't gotten it to work. Typically, would use "\\" before the symbol to escape it.
+#One of the backslashes will escape in Latex, the other is to escape that backslash in R.
+
+## 7 dec 22: don't have to create the directory every time obvs -af 
+
+##################### 
+###UPDATE MANUALLY###
+#####################
+ dir.create(glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/HCAHPS/{quarter}/R/Data") , recursive = TRUE)
+
+##2024-01-30: updated the file paths to be automatic instead of manually changing the quarter in every file path -af 
+save(hcahps_master_data, file = glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/HCAHPS/{quarter}/R/Data/hcahps_{quarter}_{Sys.Date()}.RData"))
+```
+
+
+The next chunk will use the data to produce the PDF reports. There is quite a bit that needs to be manually updated at the beginning of the chunk. There may be a better way to do this. Make sure the filepath is set to the data created for this quarter so you can read that in without having to recreate the entire file by rerunning the chunks above. Updates to quarters and folders are self-explanatory. Make sure the report is drawing from the most recent benchmarks document, and that it isn't time to update the benchmarks for this report.
+
+Templates will be used to create both state and CAH-level reports. No regular updates are needed to the templates between reports, but sometimes there may be changes that need to be made to the cover page text. Running each loop should create the reports for all states or CAHs. It can take several hours to create all CAH reports.
+
+```{r}
+#the data file for this quarter
+load(glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/HCAHPS/{quarter}/R/Data/hcahps_{quarter}_2024-01-30.RData"))  
+
+# ## 16 may dataset has the \\' in CAH names, see if that helps , also used the OLD MOU list (didn't fix it with either of those changes )
+# load(paste0(fmt_folder, "MBQIP Reports/Quarterly Reports/HCAHPS/2022 Q3/R/Data/hcahps_2022Q3_2023-05-16.RData"))  
+# 
+
+## removing apostrophes for the meantime til I can figure out why they don't work 
+hcahps_master_data <- hcahps_master_data %>% 
+  mutate(cah_name= str_replace_all(cah_name, "'", "") ) 
+
+
+# hcahps_master_data2 <- hcahps_master_data %>% 
+#   mutate(resp_rate = case_when(ps_flag == 1 ~ "*" ,
+#                                TRUE ~ resp_rate))
+
+##2024-01-30: updated directory creation to use glue+quarter so it doesn't have to be manually changed every quarter -af 
+#dir.create(glue::glue("C:/Users/furuk015/Desktop/HCAHPS/reports/HCAHPS_{quarter}"))
+dir.create("C:/Users/furuk015/Desktop/projects/MBQIP_update/reports" , recursive = TRUE)
+#report_directory <-here::here(glue::glue("reports/HCAHPS_{quarter}"))
+report_directory <-here::here(glue::glue("C:/Users/furuk015/Desktop/projects/MBQIP_update/reports"))
+
+report_period <- "Current Reporting Period: Q3 2022 - Q2 2023"
+#report_period <- "Current Reporting Period: Q4 2020, Q1 2021, Q3 2021" #used in alt report text for Q32021 reports
+p4 <- "Q2 2023"
+p3 <- "Q1 2023"
+p2 <- "Q4 2022"
+p1 <- "Q3 2022"
+
+range4 <- "Q3 2022 - Q2 2023"
+range3 <- "Q2 2022 - Q1 2023"
+range2 <- "Q1 2022 - Q4 2022"
+range1 <- "Q4 2021 - Q3 2022" 
+
+
+
+#Make sure no updates are needed to the benchmarks
+#This should only be necessary in the Q1 reports, when new benchmarks from the previous year's data will be created
+bms <- readxl::read_xlsx(paste0(fmt_folder, "MBQIP Reports/Report Creation and Processes/Report Benchmarks_10_04_23.xlsx"))
+
+#these five values affect the spreadsheets
+start_q <- "3Q2022"
+start_d <- "07/01/2022"
+end_q <- "2Q2023"
+end_d <- "06/31/2023"
+current_file <- "2023/HCAHPS/Q2 2023/HRSA_April_2024_reporting.xlsx"
+
+###################### ^ Everything above needs to be manually updated ^ #######################
+
+p4z <- paste0(str_sub(range4, end=9), "z", str_sub(range4, start=11))
+p3z <- paste0(str_sub(range3, end=9), "z", str_sub(range3, start=11))
+p2z <- paste0(str_sub(range2, end=9), "z", str_sub(range2, start=11))
+p1z <- paste0(str_sub(range1, end=9), "z", str_sub(range1, start=11))
+
+states <- hcahps_master_data %>% distinct(cah_state) %>% unlist(use.names = FALSE)
+folder <- paste(str_sub(quarter, end= 4), str_sub(quarter, -2))
+
+# STATE REPORTS #
+dir.create(glue::glue("{report_directory}/STATE REPORTS"))
+for (st in states){
+  state_data <- hcahps_master_data %>%
+    filter(cah_state==st) %>%
+    select(cah_state, period, quarter, question_id, st_denom:nat_resp_rate ) %>%
+    group_by(period, quarter, cah_state, state_name, question_id ) %>%
+    summarise(across(st_denom:nat_resp_rate, median, na.rm=TRUE)) %>%
+    ungroup() %>%
+    inner_join(bms, by= c("question_id"="measure"))
+  state_name <- unique(state_data$state_name)[1]
+    rmarkdown::render(input = here::here("scripts/HCAHPS_State_Report_Template.Rmd"), 
+                    output_format = "pdf_document",
+                    output_dir = here::here(glue::glue("{report_directory}/STATE REPORTS")) ,
+                  
+                    output_file = glue::glue("{st}_HCAHPS_{p4}.pdf"))
+  }
+
+
+
+# CAH REPORTS #
+for (st in states){
+  state_data <- hcahps_master_data %>% filter(cah_state==st)
+  cah_list <- unique(state_data$medicare_number)
+  ncah <- length(cah_list)
+  dir.create(paste0(report_directory,"/",st))
+  for (i in cah_list){
+    cah <- state_data %>% filter(medicare_number== i) %>% inner_join(bms, by= c("question_id"="measure"))
+    cah_id <- unique(cah$medicare_number)
+    name <- cah %>% filter(period==max(period)) %>% select(cah_name) %>% distinct() %>% unlist(use.names = FALSE) 
+    hospinfo <- paste0(cah_id, ": ", name)[1]
+    hospgeo <- paste0(unique(cah$cah_city)[1], ", ", unique(cah$cah_state), ", ", unique(cah$cahzip))[1]
+    count <- cah %>% filter(period==4) %>% distinct(completed_surveys) %>% unlist(use.names = FALSE)
+    #maybe add some rounding for 1000+
+   new_count <- cah %>% filter(period==4) %>% distinct(ps_flag) %>% unlist(use.names = FALSE)
+   count2 <- ifelse(new_count== 1, "*", count) ## 28 aug 23: updated to try to replace NA with * when appropriate using the ps_flag
+    cah_resp <- cah %>% filter(period==4) %>% distinct(resp_rate) %>% unlist(use.names = FALSE)
+    new_cah_resp<- cah %>% filter(period==4) %>% distinct(ps_flag) %>% unlist(use.names = FALSE)
+    response <- ifelse(is.na(cah_resp)==TRUE, "N/A", round_perc(cah_resp/100))
+    response_new <- ifelse(new_cah_resp== 1, "*", response) ## 28 aug 23: updated to try to replace NA with * when appropriate using the ps_flag
+    cah_star <- cah %>% distinct(master_star_rating) %>% unlist(use.names = FALSE)
+    star <- ifelse(is.na(cah_star)==TRUE, "N/C", as.character(cah_star))
+    state_name <- unique(state_data$state_name)[1]
+    #rmarkdown::render(#input = paste0(fmt_folder, "MBQIP Reports/Quarterly Reports/HCAHPS/", folder, "/R/HCAHPS CAH Report Template.Rmd"),
+                       rmarkdown::render(input = here::here("R/hcahps_cah_template.Rmd"), ## updates2 has the new * version 
+                       #input = paste0("C:/Users/furuk015/Desktop/projects/MBQIP_update/R/hcahps_cah_template.Rmd"),
+                      output_format = "pdf_document",
+                      output_file = paste0(st, "_", cah_id,"_", name, "_HCAHPS_", p4,".pdf"),
+                     # output_dir = paste0(report_directory,"/",st))
+                       output_dir = here::here(glue::glue("{report_directory}/{st}")))
+  }
+}
+
+```

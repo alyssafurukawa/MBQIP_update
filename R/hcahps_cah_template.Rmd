@@ -1,0 +1,741 @@
+---
+title: "**Hospital-Level HCAHPS Report**"
+author: "`r report_period`"
+date: "**`r name`**"
+output: pdf_document
+classoption: landscape
+geometry: margin=0.5in
+fontsize: 11pt
+header-includes:
+- \usepackage{booktabs}
+- \usepackage{longtable}
+- \usepackage{array}
+- \usepackage{multirow}
+- \usepackage{wrapfig}
+- \usepackage{float}
+- \usepackage{colortbl}
+- \usepackage{pdflscape}
+- \usepackage{tabu}
+- \usepackage{threeparttable}
+- \usepackage{threeparttablex}
+- \usepackage[normalem]{ulem}
+- \usepackage{makecell}
+- \usepackage{xcolor}
+- \usepackage{titling}
+- \pretitle{\begin{center}\LARGE\includegraphics[width=10cm]{flex_full_logo.png}\\[\bigskipamount]}
+- \posttitle{\end{center}}
+- \renewcommand\maketitlehooka{\vspace{-5ex}}
+- \renewcommand\maketitlehookb{\vspace{-5ex}}
+- \renewcommand\maketitlehookc{\vspace{-5ex}}
+---
+\renewcommand{\arraystretch}{1.7}
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r quarters update, include=FALSE}
+#if a cAH doesn't have rows for all four quarters (was added recently) it will not have enough data for the trend figures
+#which creates an error. this code will add necessaery rows when needed
+quarterly_periods <- c(4, 2, 3, 1)
+
+for (per in quarterly_periods){
+  for (m in hcahps_measures2){
+    cah_temp <- cah %>% filter(question_id==m)
+    if (!(per %in% cah_temp$period)){
+        st_nt <- state_data %>% #get state and natl data for period, measure
+            filter(period==per,
+                   question_id==m) %>%
+            slice(1) %>%
+            select(question_id, period, st_denom:master_star_rating) %>%
+          mutate(provider_id= as.numeric(i))
+        
+        cah <- cah %>% bind_rows(st_nt) #add s/n data to CAH data frame
+
+    }
+  }
+}
+```
+
+```{r setup composite 1 , include=FALSE }
+composites <- c("Composite_1", "Composite_2", "Composite_3", "Composite_5" , "Q8" , "Q9")
+
+#composites <- c("Composite 1", "Composite 2", "Composite 3", "Composite 5" , "Q8" , "Q9" )
+
+ cah <- cah |> 
+   mutate(question_id = str_replace_all(question_id , " " , "_") ,
+         question_label = factor( question_id , 
+levels = c("Composite_1", "Composite_2", "Composite_3", "Composite_5" , "Composite_6" , "Composite_7" , "Q8" , "Q9" , "Q18" , "Q19") , 
+                                   labels = c(
+                                     "Composite 1 (Q1 to Q3) Communication with Nurses",
+                                     "Composite 2 (Q5 to Q7) Communication with Doctors",
+                                    "Composite 3 (Q4 & Q11) Responsiveness of Hospital Staff",
+                                     "Composite 5 (Q13 & Q14) Communication about Medicines" ,
+                                     "Composite 6 (Q16 & Q17) Discharge Information" ,
+                                     "Composite 7 (Q20 to Q22) Care Transition" ,
+                                     
+                "Q8  Cleanliness of Hospital",
+                "Q9  Quietness of Hospital",
+                "Q18  Overall Rating of Hospital (0 = worst hospital, 10 = best hospital)",
+                "Q19  Willingness to Recommend This Hospital"
+                )))
+
+composite_rows <- cah %>%
+  filter(question_id %in% composites, period==4) %>% 
+  select(medicare_number, question_id , question_label ,  star_rating, sometimes_to_never:always, st_rate_sometimes:st_rate_always,
+         nat_rate_sometimes:nat_rate_always, benchmark , ps_flag) %>% #edited 11/30
+  #arrange(-question_id) #should maybe add a check to make sure composite are in correct order
+  mutate(across(sometimes_to_never:benchmark, ~ifelse(is.na(.x), "N/A", rnd_perc(.x/100))), #11/30 (inc rounding change)
+         across(sometimes_to_never:always, ~ifelse(medicare_number %in% nomou_p4, "#", .x)), ## 19 dec 22: I think the Hawaii CAHs that don't show up have something to do with how # vs NA is approached for the tables, look into where and why they are difrferent -af
+         across(sometimes_to_never:always, ~ifelse(ps_flag == 1, "*", .x)) , ## 26 apr 23: updating to try to implement stars for some CAHs
+         star_rating= ifelse(is.na(star_rating), "N/C", as.character(star_rating))) %>%
+  select(-medicare_number , -ps_flag)
+
+c6_row <- cah %>%
+  filter(question_id== "Composite_6", period==4) %>% 
+  select(question_id , question_label , star_rating, no, yes, st_rate_no, st_rate_yes, nat_rate_no, nat_rate_yes, benchmark , ps_flag) %>% #11/30
+  ## 26 apr 23: updating to try to implement stars for some CAHs , added ps_flag -af 
+  mutate(across(no:benchmark, ~ifelse(is.na(.x), "N/A", rnd_perc(.x/100))), #11/30
+         across(no:yes, ~ifelse(as.numeric(cah_id) %in% nomou_p4, "#", .x)),
+         #the above line will technically dup first row for all rows.. but only 1 row for all below, so okay for now
+        across(no:yes, ~ifelse(ps_flag == 1, "*", .x)), ## 26 apr 23: updating to try to implement stars for some CAHs
+         star_rating= ifelse(is.na(star_rating), "N/C", as.character(star_rating))) %>% 
+  select(-ps_flag)
+
+#same as state, var values are named wrong but data is correct  
+c7_row <- cah %>%
+  filter(question_id== "Composite_7", period==4) %>% 
+  select(question_id   , question_label , star_rating, sometimes_to_never:always, st_rate_sometimes:st_rate_always,
+         nat_rate_sometimes:nat_rate_always, benchmark , ps_flag) %>% #11/30
+  mutate(across(sometimes_to_never:benchmark, ~ifelse(is.na(.x), "N/A", rnd_perc(.x/100))), #11/30
+         across(sometimes_to_never:always, ~ifelse(as.numeric(cah_id) %in% nomou_p4, "#", .x)),
+         across(sometimes_to_never:always, ~ifelse(ps_flag == 1, "*", .x)), ## 26 apr 23: updating to try to implement stars for some CAHs
+         star_rating= ifelse(is.na(star_rating), "N/C", as.character(star_rating))) %>%
+  select(-ps_flag) %>% 
+  rbind(rep(" ", 11)) #11/30
+  
+q18_row <- cah %>%
+  filter(question_id== "Q18", period==4) %>% 
+  select(question_id , question_label, star_rating, rating_0_6:rating_9_10, st_rate_rate06:st_rate_rate910, nat_rate_rate06:nat_rate_rate910, benchmark , ps_flag) %>% #11/30
+  mutate(across(rating_0_6:benchmark, ~ifelse(is.na(.x), "N/A", rnd_perc(.x/100))), #11/30
+         across(rating_0_6:rating_9_10, ~ifelse(as.numeric(cah_id) %in% nomou_p4, "#", .x)),
+         across(rating_0_6:rating_9_10, ~ifelse(ps_flag == 1, "*", .x)) ,
+         star_rating= ifelse(is.na(star_rating), "N/C", as.character(star_rating))) %>% 
+    select(-ps_flag)
+  
+q19_row <- cah %>%
+  filter(question_id== "Q19", period==4) %>% 
+  select(question_id , question_label, star_rating, definitely_no:definitely_yes, st_rate_defno:st_rate_defyes, nat_rate_defno:nat_rate_defyes, benchmark , ps_flag) %>% #11/30
+  mutate(across(definitely_no:nat_rate_defyes, ~ifelse(is.na(.x), "N/A", rnd_perc(.x/100))), #11/30
+         across(definitely_no:definitely_yes, ~ifelse(as.numeric(cah_id) %in% nomou_p4, "#", .x)),
+         across(definitely_no:definitely_yes, ~ifelse(ps_flag == 1, "*", .x)) ,
+         benchmark= ifelse(is.na(benchmark), " ", round_perc(benchmark/100)), #11/30
+         star_rating= ifelse(is.na(star_rating), "N/C", as.character(star_rating))) %>%
+  select(-ps_flag) %>% 
+  set_colnames(names(q18_row)) 
+
+
+
+# composite1_data <- composite_rows |> 
+#   #filter(question_id == "Composite 1", period==4)  
+#   filter(question_id == "Composite 1") 
+# 
+# table1 <- composite1_data |> 
+#   gt(rowname_col = "question_id")  |> 
+#   tab_stubhead(label = "HCAHPS Composite")|> 
+#   tab_spanner(
+#     label = "HCAHPS Star Rating" ,
+#     columns = "star_rating"
+#   ) |> 
+#   tab_spanner(
+#     label = "Your Hospital's Adjusted Score" ,
+#     columns = c(sometimes_to_never , usually , always)
+#   ) |> 
+#   tab_spanner(
+#     label = "Your State's CAH Data" ,
+#     columns = c(st_rate_sometimes , st_rate_usually , st_rate_always) 
+#   ) |> 
+#   tab_spanner(
+#     label = "National CAH Data" ,
+#     columns = c(nat_rate_sometimes , nat_rate_usually , nat_rate_always) ,
+#     id = "nat_data"
+#   ) |> 
+#   tab_spanner(
+#     label = "Benchmark" ,
+#     columns = "benchmark"  
+#   ) |> 
+#   cols_label(
+#     star_rating = "Star Rating (0-5)" , 
+#     contains("sometimes") ~ "Sometimes to Never" ,
+#     contains("usually") ~ "Usually" ,
+#     contains("always") ~ "Always" ,
+#     benchmark = "Always"
+#   ) |> 
+#   tab_style(
+#     style = cell_borders(
+#       sides = c("left") ,
+#       color = "gray" ,
+#       weight = px(1)) ,
+#     locations = cells_body(columns = contains("sometimes") 
+#   )) |> 
+#   tab_style(
+#     style = cell_borders(
+#       sides = c("right") ,
+#       color = "gray" ,
+#       weight = px(1)) ,
+#     locations = cells_body(columns = contains("always") 
+#   ))
+
+
+## 2024-03-01: wrote a function for the first composites, could maybe make it a loop at some point? but this works for now I think -af  
+composite_table <- function(x) {
+  composite_data   <- composite_rows |> 
+    filter(question_id== x) 
+  
+  table <- composite_data |> 
+    select(-question_id) |> 
+  gt(rowname_col = "question_label")  |> 
+  tab_stubhead(label = "HCAHPS Composite")|> 
+    gt::cols_width(question_label ~ px(60) , ##2024-01-26: see how wide we can go! -af 
+                 everything() ~px(40)) |> 
+  tab_spanner(
+    label = "HCAHPS Star Rating" ,
+    columns = "star_rating" ,
+    id = "star_id"
+  ) |> 
+  tab_spanner(
+    label = "Your Hospital's Adjusted Score" ,
+    columns = c(sometimes_to_never , usually , always) ,
+    id = "hsp_id"
+  ) |> 
+  tab_spanner(
+    label = md("**Your State's CAH Data**") ,
+    columns = c(st_rate_sometimes , st_rate_usually , st_rate_always) ,
+    id = "state_id"
+  ) |> 
+  tab_spanner(
+    label = "National CAH Data" ,
+    columns = c(nat_rate_sometimes , nat_rate_usually , nat_rate_always) ,
+    id = "nat_id"
+  ) |> 
+  tab_spanner(
+    label = "Benchmark" ,
+    columns = "benchmark"  ,
+    id = "benchmark_id" 
+  ) |> 
+  cols_label(
+    star_rating = "Star Rating (0-5)" , 
+    contains("sometimes") ~ "Sometimes to Never" ,
+    contains("usually") ~ "Usually" ,
+    contains("always") ~ "Always" ,
+    benchmark = "Always"
+  ) |> 
+  tab_style(
+    style = cell_borders(
+      sides = "left" ,
+      color = "gray" ,
+      weight = px(1)) ,
+    locations = cells_body(columns = contains("sometimes") 
+  )) |> 
+  tab_style(
+    style = cell_borders(
+      sides = "right" ,
+      color = "gray" ,
+      weight = px(1)) ,
+    locations = cells_body(columns = contains("always") 
+  )) |> 
+    tab_style(
+      style = cell_text( weight = "bold") ,
+      locations = cells_column_spanners(everything()
+      
+    )
+    )
+    
+  
+  
+}
+
+table1 <- composite_table("Composite_1")
+
+
+
+  
+
+
+```
+
+```{r composite2 setup}
+
+table2 <- composite_table("Composite_2")
+
+
+```
+
+```{r setup composite 3}
+table3 <- composite_table("Composite_3")
+```
+
+```{r setup composite 5}
+table5 <- composite_table("Composite_5")
+
+
+```
+
+
+```{r q8 setup}
+
+
+q89_table <- function(x ) {
+  composite_data   <- composite_rows |> 
+    filter(question_id== x) 
+  
+  comp_id <- unique(composite_data$question_id)[1]
+  
+  table <- composite_data |> 
+    select(-question_id) |> 
+  gt(rowname_col = "question_label")  |> 
+  tab_stubhead(label = "Hospital Environment Items")|> 
+    gt::cols_width(question_label ~ px(60) , 
+                 everything() ~px(40)) |> 
+  tab_spanner(
+    label = "HCAHPS Star Rating" ,
+    columns = "star_rating"
+  ) |> 
+  tab_spanner(
+    label = "Your Hospital's Adjusted Score" ,
+    columns = c(sometimes_to_never , usually , always)
+  ) |> 
+  tab_spanner(
+    label = "Your State's CAH Data" ,
+    columns = c(st_rate_sometimes , st_rate_usually , st_rate_always) 
+  ) |> 
+  tab_spanner(
+    label = "National CAH Data" ,
+    columns = c(nat_rate_sometimes , nat_rate_usually , nat_rate_always) ,
+    id = "nat_data"
+  ) |> 
+  tab_spanner(
+    label = "Benchmark" ,
+    columns = "benchmark"  
+  ) |> 
+  cols_label(
+    star_rating = "Star Rating (0-5)" , 
+    contains("sometimes") ~ "Sometimes to Never" ,
+    contains("usually") ~ "Usually" ,
+    contains("always") ~ "Always" ,
+    benchmark = "Always"
+  ) |> 
+  tab_style(
+    style = cell_borders(
+      sides = c("left") ,
+      color = "gray" ,
+      weight = px(1)) ,
+    locations = cells_body(columns = contains("sometimes") 
+  )) |> 
+  tab_style(
+    style = cell_borders(
+      sides = c("right") ,
+      color = "gray" ,
+      weight = px(1)) ,
+    locations = cells_body(columns = contains("always") 
+  ))
+    
+  
+  
+}
+
+tableq8 <- q89_table("Q8")
+```
+
+
+```{r setup q9}
+
+tableq9 <- q89_table("Q9")
+
+```
+
+```{r setup composite 6}
+comp6_table <- function(x ) {
+  composite_data   <- c6_row |> 
+    filter(question_id== x) 
+  
+  comp_id <- unique(composite_data$question_id)[1]
+  
+  table <- composite_data |> 
+    select(-question_id) |> 
+  gt(rowname_col = "question_label")  |> 
+  tab_stubhead(label = "Discharge Information Composite")|> 
+    gt::cols_width(question_label ~ px(60) , 
+                 everything() ~px(40)) |> 
+  tab_spanner(
+    label = "HCAHPS Star Rating" ,
+    columns = "star_rating"
+  ) |> 
+  tab_spanner(
+    label = "Your Hospital's Adjusted Score" ,
+    columns = c("no" , "yes")
+  ) |> 
+  tab_spanner(
+    label = "Your State's CAH Data" ,
+    columns = c(st_rate_no , st_rate_yes) 
+  ) |> 
+  tab_spanner(
+    label = "National CAH Data" ,
+    columns = c(nat_rate_no, nat_rate_yes) ,
+    id = "nat_data"
+  ) |> 
+  tab_spanner(
+    label = "Benchmark" ,
+    columns = "benchmark"  
+  ) |> 
+  cols_label(
+    star_rating = "Star Rating (0-5)" , 
+    contains("no") ~ "No" ,
+    contains("yes") ~ "Yes" ,
+    benchmark = "Yes"
+  ) |> 
+  tab_style(
+    style = cell_borders(
+      sides = c("left") ,
+      color = "gray" ,
+      weight = px(1)) ,
+    locations = cells_body(columns = contains("no") 
+  )) |> 
+  tab_style(
+    style = cell_borders(
+      sides = c("right") ,
+      color = "gray" ,
+      weight = px(1)) ,
+    locations = cells_body(columns = contains("yes") 
+  ))
+    
+  
+  
+}
+
+table6 <- comp6_table("Composite_6")
+
+```
+
+```{r setup comp 7}
+comp7_table <- function(x ) {
+  composite_data   <- c7_row |> 
+    filter(question_id== x) 
+  
+  comp_id <- unique(composite_data$question_id)[1]
+  
+  table <- composite_data |> 
+    select(-question_id) |> 
+  gt(rowname_col = "question_label")  |> 
+  tab_stubhead(label = "Care Transition Composite")|> 
+    gt::cols_width(question_label ~ px(60) , 
+                 everything() ~px(40)) |> 
+  tab_spanner(
+    label = "HCAHPS Star Rating" ,
+    columns = "star_rating"
+  ) |> 
+  tab_spanner(
+    label = "Your Hospital's Adjusted Score" ,
+    columns = c(sometimes_to_never , usually , always)
+  ) |> 
+  tab_spanner(
+    label = "Your State's CAH Data" ,
+    columns = c(st_rate_sometimes , st_rate_usually , st_rate_always) 
+  ) |> 
+  tab_spanner(
+    label = "National CAH Data" ,
+    columns = c(nat_rate_sometimes , nat_rate_usually , nat_rate_always) ,
+    id = "nat_data"
+  ) |> 
+  tab_spanner(
+    label = "Benchmark" ,
+    columns = "benchmark"  
+  ) |> 
+  cols_label(
+    star_rating = "Star Rating (0-5)" , 
+    contains("sometimes") ~ "Disagree to Strongly Disagree" ,
+    contains("usually") ~ "Agree" ,
+    contains("always") ~ "Strongly Agree" ,
+    benchmark = "Strongly Agree"
+  ) |> 
+  tab_style(
+    style = cell_borders(
+      sides = c("left") ,
+      color = "gray" ,
+      weight = px(1)) ,
+    locations = cells_body(columns = contains("sometimes") 
+  )) |> 
+  tab_style(
+    style = cell_borders(
+      sides = c("right") ,
+      color = "gray" ,
+      weight = px(1)) ,
+    locations = cells_body(columns = contains("always") 
+  ))
+    
+  
+  
+}
+
+table7 <- comp7_table("Composite_7")
+```
+
+```{r q18 setup}
+
+q18_function <- function(x ) {
+  composite_data   <- q18_row |> 
+    filter(question_id== x) 
+  
+  comp_id <- unique(composite_data$question_id)[1]
+  
+  table <- composite_data |> 
+    select(-question_id) |> 
+  gt(rowname_col = "question_label")  |> 
+  tab_stubhead(label = "HCAHPS Global Items")|> 
+    gt::cols_width(question_label ~ px(60) , 
+                 everything() ~px(40)) |> 
+  tab_spanner(
+    label = "HCAHPS Star Rating" ,
+    columns = "star_rating"
+  ) |> 
+  tab_spanner(
+    label = "Your Hospital's Adjusted Score" ,
+    columns = c(rating_0_6:rating_9_10)
+  ) |> 
+  tab_spanner(
+    label = "Your State's CAH Data" ,
+    columns = c(st_rate_rate06:st_rate_rate910) 
+  ) |> 
+  tab_spanner(
+    label = "National CAH Data" ,
+    columns = c(nat_rate_rate06:nat_rate_rate910) ,
+    id = "nat_data"
+  ) |> 
+  tab_spanner(
+    label = "Benchmark" ,
+    columns = "benchmark"  
+  ) |> 
+  cols_label(
+    star_rating = "Star Rating (0-5)" , 
+    contains("6") ~ "0-6 rating" ,
+    contains("7") ~ "7-8 rating" ,
+    contains("9") ~ "9-10 rating" ,
+    benchmark = "9-10 rating"
+  ) |> 
+  tab_style(
+    style = cell_borders(
+      sides = c("left") ,
+      color = "gray" ,
+      weight = px(1)) ,
+    locations = cells_body(columns = contains("6") 
+  )) |> 
+  tab_style(
+    style = cell_borders(
+      sides = c("right") ,
+      color = "gray" ,
+      weight = px(1)) ,
+    locations = cells_body(columns = contains("9") 
+  ))
+    
+  
+  
+}
+
+q18_table <- q18_function("Q18")
+
+```
+
+
+```{r q19 setup}
+q19_function <- function(x ) {
+  composite_data   <- q19_row |> 
+    filter(question_id== x) 
+  
+  comp_id <- unique(composite_data$question_id)[1]
+  
+  table <- composite_data |> 
+    select(-question_id) |> 
+  gt(rowname_col = "question_label")  |> 
+  tab_stubhead(label = "HCAHPS Global Items")|> 
+    gt::cols_width(question_label ~ px(60) ,
+                 everything() ~px(40)) |> 
+  tab_spanner(
+    label = "HCAHPS Star Rating" ,
+    columns = "star_rating"
+  ) |> 
+  tab_spanner(
+    label = "Your Hospital's Adjusted Score" ,
+    columns = c(rating_0_6:rating_9_10)
+  ) |> 
+  tab_spanner(
+    label = "Your State's CAH Data" ,
+    columns = c(st_rate_rate06:st_rate_rate910) 
+  ) |> 
+  tab_spanner(
+    label = "National CAH Data" ,
+    columns = c(nat_rate_rate06:nat_rate_rate910) ,
+    id = "nat_data"
+  ) |> 
+  tab_spanner(
+    label = "Benchmark" ,
+    columns = "benchmark"  
+  ) |> 
+  cols_label(
+    star_rating = "Star Rating (0-5)" , 
+    contains("6") ~ "Definitely Not or Probably Not" ,
+    contains("7") ~ "Probably" ,
+    contains("9") ~ "Definitely" ,
+    benchmark = "No Benchmark"
+  ) |> 
+  tab_style(
+    style = cell_borders(
+      sides = c("left") ,
+      color = "gray" ,
+      weight = px(1)) ,
+    locations = cells_body(columns = contains("6") 
+  )) |> 
+  tab_style(
+    style = cell_borders(
+      sides = c("right") ,
+      color = "gray" ,
+      weight = px(1)) ,
+    locations = cells_body(columns = contains("9") 
+  ))
+    
+  
+  
+}
+
+q19_table <-  q19_function("Q19")
+
+```
+
+The Medicare Beneficiary Quality Improvement Program (MBQIP) focuses on quality improvement efforts in the 45 states that participate in the Medicare Rural Hospital Flexibility (Flex) Program. Through Flex, MBQIP supports more than 1,350 small hospitals certified as rural Critical Access Hospitals (CAHs) in voluntarily reporting quality measures that are aligned with those collected by the Centers for Medicare and Medicaid Services (CMS) and other Federal programs.   
+The Federal Office of Rural Health Policy (FORHP) tasked the Flex Monitoring Team with producing a set of hospital-level reports for the core MBQIP measures. 
+
+Data for the Patient Experience MBQIP Domain are included here, specifically for the Hospital Consumer Assessment of Healthcare Providers and Systems (HCAHPS) measure. HCAHPS is a quarterly measure, and all data in the report are updated each quarter. This measure has several components included in this report:
+
+*	HCAHPS Composite 1: Q1 to Q3, Communication with Nurses
+*	HCAHPS Composite 2: Q5 to Q7, Communication with Doctor
+*	HCAHPS Composite 3: Q4 & Q11, Responsiveness of Hospital Staff
+*	HCAHPS Composite 5: Q13 & Q14, Communication about Medicines
+*	HCAHPS Composite 6: Q16 & Q17, Discharge Information
+*	HCAHPS Composite 7: Q20 to Q22, Care Transition
+*	HCAHPS Q-8: Cleanliness of Hospital Environment
+*	HCAHPS Q-9: Quietness of Hospital Environment
+*	HCAHPS Q-18: Overall Rating of Hospital
+*	HCAHPS Q-19: Willingness to Recommend This Hospital
+
+
+Data for all other MBQIP Domains and measures are released separately each quarter in the MBQIP Measures Reports. For more information regarding the data and calculations, please reference the Appendix at the end of this document.
+
+\newpage
+
+**HCAHPS Composites**
+
+```{r composite1 }
+table1
+```
+
+```{r composite2}
+table2 
+
+```
+
+```{r composite3}
+ table3
+```
+
+```{r composite5 }
+table5
+```
+\newpage
+
+**Hospital Environment Items**
+
+
+```{r q8}
+
+tableq8
+```
+
+```{r q9}
+
+tableq9
+```
+
+
+\newpage
+
+**Discharge Information Composite**
+
+```{r composite 6}
+
+table6
+
+```
+
+\newpage
+
+**Care Transition Composite**
+
+```{r composite 7}
+
+table7
+```
+
+\newpage
+
+**HCAHPS Global Items**
+
+```{r q18}
+
+q18_table
+```
+
+
+
+```{r q19}
+
+q19_table
+```
+
+\newpage
+\begin{center}
+{\bfseries\LARGE Appendix}
+\end{center}
+
+\fontsize{12}{13}
+
+**General Report Information**
+For the measures in this report, hospital-level data are included for the current reporting period, which includes four rolling quarters. Hospital-level data include: 
+
+*	The number of completed surveys - the number of participants who returned the survey in the specified timeframe. 
+
+*	The survey response rate - the percentage of participants sampled who returned the survey. 
+
+*	HCAHPS summary of Star Ratings - calculated using mean scores for each HCAHPS measure which was then categorized into a rating of 1, 2, 3, 4, or 5 using a statistical clustering algorithm. All measures are eligible to receive a star rating. Hospitals with fewer than 100 completed HCAHPS surveys within the current reporting period are not eligible to receive star ratings.
+
+This report also includes state and national averages for each measure. These data may be useful in understanding how your hospital’s performance com- pares to other hospitals. The data for state and national values in this report only include CAHs with a signed MBQIP Memorandum of Understanding (MOU). The data used for this report are reported to the Centers for Medicare and Medicaid Services (CMS) and extracted from QualityNet.
+CMS requires that CAHs submit ten months of data (reporting in all four quarters) to be publicly reporting. In order for scores to be calculated for a quarter, CAHs must also have two or more completed surveys.
+
+Specific information on how data elements were calculated for inclusion in this report is outlined below. Please direct questions regarding your MBQIP data reports to the Flex Coordinator in your state. You can find contact information for your Flex Coordinator at: https://www.ruralcenter.org/tasc/ flexprofile.
+
+**Measure Adjustment & Aggregation**
+For each measure (composite or individual question), your hospital has a reported “adjusted score”, where data has been adjusted by CMS for the mix of patients and the mode by which the survey was administered. Adjusted scores show the percentage of survey respondents who selected certain responses to the survey questions, and is completed to reduce the bias in comparisons between hospitals. State measures aggregate all CAHs in the state and national measures aggregate all CAHs nationwide (not all hospitals, as was the case in the MBQIP reports previously produced by Telligen). Values for state and national data may not always add to 100% due to rounding.
+
+**Response Categories**
+
+Response categories vary by question. For example, some questions use “Yes” or “No” as response options, where others have scales ranging from “Never” to “Always” or “Strongly disagree” to “Strongly agree”. For this report, some responses are combined into one category, for example “Sometimes to Never,” compared to “Usually” or “Always”.
+
+**Benchmarks**
+
+Benchmarks for the HCAHPS measures come from the benchmarks selected for CMS’ Hospital Value-Based Purchasing Program in 2023. HCAHPS Question 19 (patient recommendation) does not have a benchmark as part of these standards, and HCAHPS questions 8 and 9 (quietness and cleanliness) receive a joint benchmark.
+
+**Data Exceptions & Labels**
+
+*	“N/A” indicates that a CAH did not report data in at least 10 of the 12 months for the current reporting period.
+*	“*” indicates that the CAH did not have eligible patients to survey or enough data to meet CMS criteria for analyses.
+00 surveys were returned in the current reporting period so a Star Rating was not able to be calculated.
+* “#” indicates that the CAH did not have a signed MOU at the time of reporting for this period.
+
