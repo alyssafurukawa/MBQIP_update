@@ -37,16 +37,21 @@ read_simple <- function(file, year=2019){
 Load the MOU list which will remove CAHs that shouldn't be included in the data. Use the most recent available MOU list and update the file path accordingly. Use the information from the MOU list to manually create a list of CAHs that currently have signed MOUs but should be excluded for specific quarters. Unlike in the other quarterly reports, this needs to be done manually because of the several missing quarters of HCAHPS data. If a CAH has a signed MOU, but not yet for the current period, we need to have a CAH report for them but they aren't included in the aggregated (state/national) totals. The value of "quarter" will also need to be updated with each report.
 
 ```{r}
-quarter <- "2023Q2"
-p3_q <- "2023Q1" 
-p2_q <- "2022Q4"
-p1_q <- "2022Q3"
-lastQ_data <- "MBQIP Reports/Quarterly Reports/HCAHPS/2023 Q1/R/Data/hcahps_2023Q1_2023-10-25.Rdata"
+quarter <- "2023Q3"
+p7_q <- "2023Q2" 
+p6_q <- "2023Q1"
+p5_q <- "2022Q4"
+p4_q <-  "2022Q3"
+p3_q <- "2022Q2" 
+p2_q <- "2022Q1"
+p1_q <- "2021Q4"
+
+lastQ_data <- "MBQIP Reports/Quarterly Reports/HCAHPS/2023Q2/R/Data/hcahps_2023Q2_2024-01-30.Rdata"
 #^^^^^^ manually update for every report ^^^^^^^^^^^^^^^^^
 
 
-#MOU list, updated to most recent 10_25_23
-list <- readxl::read_xlsx(paste0(fmt_folder, "MBQIP Reports/CAH List with MOU_FMT 1.3.24.xlsx"), sheet = "CAHs with MOU") %>%
+#MOU list
+list <- readxl::read_xlsx(paste0(fmt_folder, "MBQIP Reports/CAH List with MOU_FMT 4.15.24.xlsx"), sheet = "CAHs with MOU") %>%
   clean_names() %>%
   mutate(provider_id= as.numeric(medicare_number)) %>%
   filter(is.na(medicare_number)==FALSE)
@@ -56,7 +61,7 @@ moulist <- list %>%
  
 nrow(moulist) 
 ## 2023-10-25: 1340
-## 2024-01-30: 1347
+## 2024-05-23: 1348
 
 no_moulist <- list %>%
   filter(!is.na(quarterly_measures)) %>%
@@ -67,9 +72,28 @@ no_moulist <- list %>%
 #CAH with no MOU for this period --- can't use their data but need to have a report
 #Even though the HCAHPS data includes multiple periods, only care about MOU from the current period
 #No manual changes needed
+nomou_p8 <- no_moulist %>% #7 dec 22: no mou for this quarter, etc, 2 on list -af 
+  filter(hcahps > as.numeric(paste0(str_sub(quarter, end=-3), str_sub(quarter, start=-1)))) %>%
+  select(provider_id) %>% 
+  pull()
+
+nomou_p7 <- no_moulist %>% 
+  filter(hcahps > as.numeric(paste0(str_sub(p7_q, end=-3), str_sub(p7_q, start=-1)))) %>%
+  select(provider_id) %>% 
+  pull()
+
+nomou_p6 <- no_moulist %>% 
+  filter(hcahps > as.numeric(paste0(str_sub(p6_q, end=-3), str_sub(p6_q, start=-1)))) %>%
+  select(provider_id) %>% 
+  pull()
+
+nomou_p5 <- no_moulist %>%  
+  filter(hcahps > as.numeric(paste0(str_sub(p5_q, end=-3), str_sub(p5_q, start=-1)))) %>%
+  select(provider_id) %>% 
+  pull()
 
 nomou_p4 <- no_moulist %>% #7 dec 22: no mou for this quarter, etc, 2 on list -af 
-  filter(hcahps > as.numeric(paste0(str_sub(quarter, end=-3), str_sub(quarter, start=-1)))) %>%
+  filter(hcahps > as.numeric(paste0(str_sub(p4_q, end=-3), str_sub(p4_q, start=-1)))) %>%
   select(provider_id) %>% 
   pull()
 
@@ -89,7 +113,7 @@ nomou_p1 <- no_moulist %>%
   pull()
 
 #recently closed CAHs, will be removed from previous Q data to prevent report generation
-closed <- c(281321 , 421303 , 151335 , 451345 , 451360 , 441311 ,371324 ,
+closed <- c(441324 , 281330 , 251329 ,251306 ,261315 ,041304 , 281321 , 421303 , 151335 , 451345 , 451360 , 441311 ,371324 ,
 231317 , 
 191303 ,
 171340 ,
@@ -137,10 +161,10 @@ read_hcahps <- function(file, joinMOU=FALSE){
   return(hcahps_frame)
 }
 
-hcahps_raw <- read_hcahps("2023/HCAHPS/Q2 2023/HRSA_April_2024_reporting.xlsx", joinMOU= TRUE)
+hcahps_raw <- read_hcahps("2023/HCAHPS/Q3 2023/HRSA_July_2024_reporting_2.xlsx", joinMOU= TRUE) ##2024-05-10: had to redo the TSV export so this is the secone xlsx file, generally there should just be one -af 
 
 
-hcahps_outcomes <-  readxl::read_xlsx(paste0(fmt_folder, "Data/MBQIP Data/2023/HCAHPS/Q2 2023/HRSA_outcomes_April_2024_reporting.xlsx")) %>% 
+hcahps_outcomes <-  readxl::read_xlsx(paste0(fmt_folder, "Data/MBQIP Data/2023/HCAHPS/Q3 2023/HRSA_outcomes_July_2024_reporting.xlsx")) %>% 
   mutate(provider_id = as.numeric(planname)) %>% 
   select(-planname)
 
@@ -148,10 +172,9 @@ hcahps_raw <- hcahps_raw %>%
   left_join(hcahps_outcomes , by = "provider_id" )
 
 nrow(hcahps_raw) 
-## 13 march 23: 14751
-## 15 may 23: 14784
-## 14 august 23: 14773
+
 ## 2023-10-25: 14740
+##2024-05-21: 14828
 
 #Reverse engineer the number of respondents with each answer
 hcahps_new <- hcahps_raw %>%
@@ -169,7 +192,7 @@ hcahps_new <- hcahps_raw %>%
          num_defno= definitely_no*denom/100,
          num_prob= probably_yes*denom/100,
          num_defyes= definitely_yes*denom/100) %>%
-  mutate(period=4,
+  mutate(period=8, ## 2024-05-23: changed from 4 to 8 to use EIGHT periods since the figures need them later -af 
          quarter= quarter,
          q_nonreport= ifelse(if_all(.cols= sometimes_to_never:definitely_yes, ~is.na(.)) & completed_surveys != "N/A", 1, 0) ) #,
          #q_nonreport = case_when(if_all(.cols= sometimes_to_never:definitely_yes, ~is.na(.)) & completed_surveys != "N/A" ~ 1 ,
@@ -194,8 +217,9 @@ load(paste0(fmt_folder, lastQ_data))
 #adjust periods & drop old data
 previous_qs <- hcahps_master_data %>%
   select(provider_id:q_nonreport) %>% #updated 5/31/22
-  filter(period != 1) %>% #remove oldest period of data
-  mutate(period= period-1) #move period back 1
+  filter(period != 1) |>  #remove oldest period of data
+  #mutate(period= period-1) #move period back 1
+  mutate(period= period + 3) ## changing to an 8 period sitch, ideally after this will be able to return to the period-1 code -af 
 
 #join all quarters- remove any closed CAHs from the old data
 hcahps_cah <- hcahps_new %>% 
@@ -205,15 +229,41 @@ hcahps_cah <- hcahps_new %>%
   
 
 nrow(hcahps_cah) 
-## 14 august 23: 53660
 ## 2023-10-25: 53480
+## 2024-05-21: 53600 
 ```
+2024-05: Need to add an extra FOUR points to the existing reports, we have Q3 2023 done so I'm going to go back to 2022 Q3 which should have the other 4 points we need 
+```{r}
+#load data from previous report
+old_data <- "MBQIP Reports/Quarterly Reports/HCAHPS/2022 Q3/R/Data/hcahps_2022Q3_2023-05-16.Rdata"
+
+load(paste0(fmt_folder, old_data))
+
+
+hcahps_master_data_old  <-  hcahps_master_data |> 
+  select(provider_id:q_nonreport)
+
+hcahps_cah <-  hcahps_cah |> 
+ # mutate(period = period+4) |> 
+  select(provider_id:q_nonreport) |> 
+  bind_rows(hcahps_master_data_old) %>%
+  filter(!(provider_id %in% closed)) %>%
+  mutate(cah_name= str_trim(cah_name))
+
+unique(hcahps_cah$period) ## checking for all 8 periods -af 
+
+```
+
 
 The next chunk generates state and national estimates using the CAH data. CAHs with no MOU are not included in either calculation. If data from previous periods was added for new CAHs above, it may be necessary to exclude those from these calculations so they don't affect them. Otherwise, only the file path of the new data file needs to updated manually. This code would benefit from being adjusted, as discussed in the OPIP reports, given the time and motivation.
 
 ```{r}
 hcahps_trim <- hcahps_cah %>% 
-  filter(!(period==4 & provider_id %in% nomou_p4), #remove CAHs w/o MOUs
+  filter(!(period==8 & provider_id %in% nomou_p8), #remove CAHs w/o MOUs
+         !(period==7 & provider_id %in% nomou_p7),
+         !(period==6 & provider_id %in% nomou_p6),
+         !(period==5 & provider_id %in% nomou_p5),
+         !(period==4 & provider_id %in% nomou_p4), #remove CAHs w/o MOUs
          !(period==3 & provider_id %in% nomou_p3),
          !(period==2 & provider_id %in% nomou_p2),
          !(period==1 & provider_id %in% nomou_p1)) %>%
@@ -264,15 +314,15 @@ hcahps_master_data <- hcahps_cah %>%
 #original symbols, but I haven't gotten it to work. Typically, would use "\\" before the symbol to escape it.
 #One of the backslashes will escape in Latex, the other is to escape that backslash in R.
 
-## 7 dec 22: don't have to create the directory every time obvs -af 
 
-##################### 
-###UPDATE MANUALLY###
-#####################
- dir.create(glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/HCAHPS/{quarter}/R/Data") , recursive = TRUE)
+
+#dir.create(glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/HCAHPS/{quarter}/R/Data") , recursive = TRUE)
+dir.create(glue::glue(here::here("R/Data/{quarter}") , recursive = TRUE))
 
 ##2024-01-30: updated the file paths to be automatic instead of manually changing the quarter in every file path -af 
-save(hcahps_master_data, file = glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/HCAHPS/{quarter}/R/Data/hcahps_{quarter}_{Sys.Date()}.RData"))
+#save(hcahps_master_data, file = glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/HCAHPS/{quarter}/R/Data/hcahps_{quarter}_{Sys.Date()}.RData"))
+
+save(hcahps_master_data , file = glue::glue(here::here("R/Data/{quarter}/hcahps_update_{quarter}_{Sys.Date()}.RData")))
 ```
 
 
@@ -282,7 +332,9 @@ Templates will be used to create both state and CAH-level reports. No regular up
 
 ```{r}
 #the data file for this quarter
-load(glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/HCAHPS/{quarter}/R/Data/hcahps_{quarter}_2024-01-30.RData"))  
+#load(glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/HCAHPS/{quarter}/R/Data/hcahps_{quarter}_2024-01-30.RData"))  
+
+load(glue::glue(here::here("R/Data/{quarter}/hcahps_update_{quarter}_2024-05-23.RData")))
 
 # ## 16 may dataset has the \\' in CAH names, see if that helps , also used the OLD MOU list (didn't fix it with either of those changes )
 # load(paste0(fmt_folder, "MBQIP Reports/Quarterly Reports/HCAHPS/2022 Q3/R/Data/hcahps_2022Q3_2023-05-16.RData"))  
@@ -303,17 +355,25 @@ dir.create("C:/Users/furuk015/Desktop/projects/MBQIP_update/reports" , recursive
 #report_directory <-here::here(glue::glue("reports/HCAHPS_{quarter}"))
 report_directory <-here::here(glue::glue("C:/Users/furuk015/Desktop/projects/MBQIP_update/reports"))
 
-report_period <- "Current Reporting Period: Q3 2022 - Q2 2023"
+report_period <- "Current Reporting Period: Q4 2022 - Q3 2023"
 #report_period <- "Current Reporting Period: Q4 2020, Q1 2021, Q3 2021" #used in alt report text for Q32021 reports
-p4 <- "Q2 2023"
-p3 <- "Q1 2023"
-p2 <- "Q4 2022"
-p1 <- "Q3 2022"
+p8 <- "Q3 2023"
+p7 <- "Q2 2023"
+p6 <- "Q1 2023"
+p5 <- "Q4 2022"
+p4 <- "Q3 2022"
+p3 <- "Q2 2022"
+p2 <- "Q1 2022"
+p1 <- "Q4 2021"
 
-range4 <- "Q3 2022 - Q2 2023"
-range3 <- "Q2 2022 - Q1 2023"
-range2 <- "Q1 2022 - Q4 2022"
-range1 <- "Q4 2021 - Q3 2022" 
+range8 <- "Q4 2022 - Q3 2023"
+range7 <- "Q3 2022 - Q2 2023"
+range6 <- "Q2 2022 - Q1 2023"
+range5 <- "Q1 2022 - Q4 2022" 
+range4 <- "Q4 2021 - Q3 2022"
+range3 <- "Q3 2021 - Q2 2022"
+range2 <- "Q2 2021 - Q1 2022"
+range1 <- "Q1 2021 - Q4 2021" 
 
 
 
@@ -330,6 +390,10 @@ current_file <- "2023/HCAHPS/Q2 2023/HRSA_April_2024_reporting.xlsx"
 
 ###################### ^ Everything above needs to be manually updated ^ #######################
 
+p8z <- paste0(str_sub(range8, end=9), "z", str_sub(range8, start=11))
+p7z <- paste0(str_sub(range7, end=9), "z", str_sub(range7, start=11))
+p6z <- paste0(str_sub(range6, end=9), "z", str_sub(range6, start=11))
+p5z <- paste0(str_sub(range5, end=9), "z", str_sub(range5, start=11))
 p4z <- paste0(str_sub(range4, end=9), "z", str_sub(range4, start=11))
 p3z <- paste0(str_sub(range3, end=9), "z", str_sub(range3, start=11))
 p2z <- paste0(str_sub(range2, end=9), "z", str_sub(range2, start=11))
@@ -338,6 +402,7 @@ p1z <- paste0(str_sub(range1, end=9), "z", str_sub(range1, start=11))
 states <- hcahps_master_data %>% distinct(cah_state) %>% unlist(use.names = FALSE)
 folder <- paste(str_sub(quarter, end= 4), str_sub(quarter, -2))
 
+states <- "MI" 
 # STATE REPORTS #
 dir.create(glue::glue("{report_directory}/STATE REPORTS"))
 for (st in states){
@@ -370,12 +435,12 @@ for (st in states){
     name <- cah %>% filter(period==max(period)) %>% select(cah_name) %>% distinct() %>% unlist(use.names = FALSE) 
     hospinfo <- paste0(cah_id, ": ", name)[1]
     hospgeo <- paste0(unique(cah$cah_city)[1], ", ", unique(cah$cah_state), ", ", unique(cah$cahzip))[1]
-    count <- cah %>% filter(period==4) %>% distinct(completed_surveys) %>% unlist(use.names = FALSE)
+    count <- cah %>% filter(period==8) %>% distinct(completed_surveys) %>% unlist(use.names = FALSE)
     #maybe add some rounding for 1000+
-   new_count <- cah %>% filter(period==4) %>% distinct(ps_flag) %>% unlist(use.names = FALSE)
+   new_count <- cah %>% filter(period==8) %>% distinct(ps_flag) %>% unlist(use.names = FALSE)
    count2 <- ifelse(new_count== 1, "*", count) ## 28 aug 23: updated to try to replace NA with * when appropriate using the ps_flag
-    cah_resp <- cah %>% filter(period==4) %>% distinct(resp_rate) %>% unlist(use.names = FALSE)
-    new_cah_resp<- cah %>% filter(period==4) %>% distinct(ps_flag) %>% unlist(use.names = FALSE)
+    cah_resp <- cah %>% filter(period==8) %>% distinct(resp_rate) %>% unlist(use.names = FALSE)
+    new_cah_resp<- cah %>% filter(period==8) %>% distinct(ps_flag) %>% unlist(use.names = FALSE)
     response <- ifelse(is.na(cah_resp)==TRUE, "N/A", round_perc(cah_resp/100))
     response_new <- ifelse(new_cah_resp== 1, "*", response) ## 28 aug 23: updated to try to replace NA with * when appropriate using the ps_flag
     cah_star <- cah %>% distinct(master_star_rating) %>% unlist(use.names = FALSE)
@@ -385,7 +450,7 @@ for (st in states){
                        rmarkdown::render(input = here::here("R/hcahps_cah_template.Rmd"), ## updates2 has the new * version 
                        #input = paste0("C:/Users/furuk015/Desktop/projects/MBQIP_update/R/hcahps_cah_template.Rmd"),
                       output_format = "pdf_document",
-                      output_file = paste0(st, "_", cah_id,"_", name, "_HCAHPS_", p4,".pdf"),
+                      output_file = paste0(st, "_", cah_id,"_", name, "_HCAHPS_", p8,".pdf"),
                      # output_dir = paste0(report_directory,"/",st))
                        output_dir = here::here(glue::glue("{report_directory}/{st}")))
   }
