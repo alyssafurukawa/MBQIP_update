@@ -2,7 +2,7 @@
 title: "**Hospital-Level HCAHPS Report**"
 author: "`r report_period`"
 date: "**`r name`**"
-output: pdf_document
+format: pdf
 classoption: landscape
 geometry: margin=0.5in
 fontsize: 11.5pt
@@ -140,8 +140,23 @@ q19_row <- cah %>%
   set_colnames(names(q18_row)) 
 
 
+response_data <- rbind(c("state",
+                  "# Completed Surveys", prettyNum(unique(state_data[state_data$period==8,]$st_denom), big.mark = ","), " ", "Response Rate", round_perc(unique(state_data[state_data$period==8,]$st_resp_rate)/100), " ") ,
+                 c("nat", 
+                  "# Completed Surveys", prettyNum(unique(state_data[state_data$period==8,]$nat_denom), big.mark = ","), " ", "Response Rate", round_perc(unique(state_data[state_data$period==8,]$nat_resp_rate)/100), " ")) %>%
+  as_tibble() |> 
+  mutate(state_label = glue::glue(""))
+
+
 
 ## 2024-03-01: wrote a function for the first composites, could maybe make it a loop at some point? but this works for now I think -af  
+
+#table_label_cah <- "Your Hospital's \nAdjusted Score \n"
+table_label_cah <- glue::glue("Your Hospital's \nAdjusted Score \n{range8}")
+                   
+table_label_state <- "Your State's \nCAH Data \n" 
+table_label_us <- "National CAH Data \n"
+
 composite_table <- function(x) {
   composite_data   <- composite_rows |> 
     filter(question_id== x) 
@@ -149,33 +164,63 @@ composite_table <- function(x) {
   table <- composite_data |> 
     select(-question_id) |> 
   gt(rowname_col = "question_label")  |> 
+    tab_header( 
+      title = glue::glue("{range8}")) |> 
   tab_stubhead(label = md("**HCAHPS Composite**"))|> 
-    gt::cols_width(question_label ~ px(50) , ##2024-01-26: see how wide we can go! -af 
+    gt::cols_width(question_label ~ px(50) , 
                  everything() ~px(40)) |> 
   tab_spanner(
-    label = md("**HCAHPS Star Rating**") ,
+    label = md("**HCAHPS 
+               Star Rating**") ,
     columns = "star_rating" ,
     id = "star_id"
   ) |> 
   tab_spanner(
-    label = md(glue::glue("**Your Hospital's
-               Adjusted Score
-               {range8}**")) ,
+    label = md("**Your Hospital's Adjusted Score**") ,
     #label = html("<b>Your Hospital's <br> Adjusted Score</b>") ,
     columns = c(sometimes_to_never , usually , always) ,
     id = "hsp_id"
   ) |> 
+    
+    tab_spanner(
+      label = glue::glue("
+                         {response_data[response_data$V1=='state',]$V5}
+                         {response_data[response_data$V1=='state',]$V6}"),
+      columns = c(st_rate_sometimes , st_rate_usually , st_rate_always) ,
+      id = "response_pct_state"
+    ) |> 
+    tab_spanner(
+      label = glue::glue("{response_data[response_data$V1=='state',]$V2}
+                         {response_data[response_data$V1=='state',]$V3}"),
+      spanners = "response_pct_state" ,
+      id = "response_n_state"
+    ) |> 
   tab_spanner(
-    label = md(glue::glue("**Your State's 
-               CAH Data
-               {range8}**")) ,
-    columns = c(st_rate_sometimes , st_rate_usually , st_rate_always) ,
+    label = md(glue::glue("**Your State's CAH Data**")) ,
+    #label = md(glue::glue("**{table_label_state} {range8}**")),
+    #columns = c(st_rate_sometimes , st_rate_usually , st_rate_always) ,
+    spanners =  "response_n_state" ,
     id = "state_id"
   ) |> 
+     tab_spanner(
+      label = glue::glue("{response_data[response_data$V1=='nat',]$V5}
+                         {response_data[response_data$V1=='nat',]$V6}"),
+      #columns = c(nat_rate_sometimes , nat_rate_usually , nat_rate_always) ,
+      columns = c(nat_rate_sometimes , nat_rate_usually , nat_rate_always) ,
+      id = "response_pct_nat"
+    ) |> 
+     tab_spanner(
+      label = glue::glue("{response_data[response_data$V1=='nat',]$V2}
+                         {response_data[response_data$V1=='nat',]$V3}"),
+      columns = c(nat_rate_sometimes , nat_rate_usually , nat_rate_always) ,
+      spanners = "response_pct_nat" , 
+      id = "response_n_nat"
+    ) |> 
   tab_spanner(
-    label = md(glue::glue("**National CAH Data
-               {range8}**")) ,
-    columns = c(nat_rate_sometimes , nat_rate_usually , nat_rate_always) ,
+    label = md(glue::glue("**National CAH Data**")) ,
+    #label = md(glue::glue("**{table_label_us} {range8}**")),
+    #columns = c(nat_rate_sometimes , nat_rate_usually , nat_rate_always) ,
+    spanners = "response_n_nat" ,
     id = "nat_id"
   ) |> 
   tab_spanner(
@@ -206,14 +251,22 @@ composite_table <- function(x) {
   ))  |> 
     tab_style(style = "padding-left:30px;",
     locations = cells_stub()) |> 
-    tab_options(table.width = pct(100)) 
+    tab_options(table.width = pct(100)) |> 
+   tab_style(
+       style = cell_text(whitespace = "pre") ,
+     # locations = cells_column_spanners(c("hsp_id" , "state_id" , "nat_id"))
+      locations = cells_body()
+     ) 
   
   
 }
 
 table1 <- composite_table("Composite_1")
 print(table1)
+```
 
+
+```{r setup composite 1 figure , include=FALSE , echo=FALSE , warning=FALSE }
 ## 2024-05-21: figure 1 and 2 should also be able to be done as a function but I think I have to write the figure first -af
 
 trend_data <- cah %>%
@@ -283,7 +336,7 @@ for (i in hcahps_measures){
                shape=21, size=2, fill=base_blue) +
   geom_text(data= filter(figure_data, cah_state == "Your Hospital"), 
             aes(x= period, y= est, label= rnd_perc(est, dec=F),
-                vjust= vjust_hcahps2(figure_data, upper=.91) ## 2024-05-31: the vjust_hcahps2 function can cause problems sometimes, usually a list in the CAH because of duplicates but I do not know how they appear tbh, troubleshoot at some point -af 
+                vjust= FMT2::vjust_hcahps2(figure_data, upper=.91)  ## 2024-05-31: the vjust_hcahps2 function can cause problems sometimes, usually a list in the CAH because of duplicates but I do not know how they appear tbh, troubleshoot at some point -af 
                 ), 
             size=4) +
   #changed filtering above ^
@@ -291,12 +344,14 @@ for (i in hcahps_measures){
   scale_color_manual(values = three_pal) +
   #scale_linetype_manual(values= c("dashed", "solid")) +
   scale_linetype_manual(values= c("dashed", "dotdash", "solid")) +
-  scale_y_continuous(limits= c(0,100), 
-                     breaks= c(0, 50, 100),
-                     expand = expansion(mult = c(0, .1))) +
+  
+  #scale_y_continuous(limits= c(0,100), 
+  # scale_y_continuous(limits= c(50,100),                    
+  #                    breaks= c(50, 75 ,100),
+  #                    expand = expansion(mult = c(0, .1))) +
   scale_x_continuous(breaks = c(1:8) ,
                      labels= addline_format(c("1"= p1z, "2"= p2z, "3"= p3z, "4"= p4z , "5"= p5z, "6"= p6z, "7"= p7z, "8"= p8z))) +
-  labs(x="", y="Percentage", color="", linetype="" , title = glue::glue("{title} Trend in {name}, \n {st}, and All CAHs Nationally" ) )+
+  labs(x="", y="Percentage", color="", linetype="" , title = glue::glue("{title} Trend in {name}, \n {state_name}, and All CAHs Nationally" ) )+
   guides(color = guide_legend(nrow = 1), fill="none") +
   theme_classic() +
   theme(
@@ -354,15 +409,17 @@ q89_table <- function(x ) {
   table <- composite_data |> 
     select(-question_id) |> 
   gt(rowname_col = "question_label")  |> 
+    tab_header( 
+      title = glue::glue("{range8}")) |> 
   tab_stubhead(label = md("**Hospital Environment Items**"))|> 
-    gt::cols_width(question_label ~ px(30) , 
+    gt::cols_width(question_label ~ px(50) , 
                  everything() ~px(40)) |> 
   tab_spanner(
     label = md("**HCAHPS Star Rating**") ,
     columns = "star_rating"
   ) |> 
   tab_spanner(
-    label = md("**Your Hospital's \n Adjusted Score**") ,
+    label = md("**Your Hospital's Adjusted Score**") ,
     columns = c(sometimes_to_never , usually , always)
   ) |> 
   tab_spanner(
@@ -424,6 +481,8 @@ comp6_table <- function(x ) {
   table <- composite_data |> 
     select(-question_id) |> 
   gt(rowname_col = "question_label")  |> 
+        tab_header( 
+      title = glue::glue("{range8}")) |> 
   tab_stubhead(label = md("**Discharge Information \n Composite**"))|> 
     gt::cols_width(question_label ~ px(50) , 
                  everything() ~px(40)) |> 
@@ -475,7 +534,7 @@ comp6_table <- function(x ) {
 
 table6 <- comp6_table("Composite_6")
 
-print(table6)
+#print(table6)
 ```
 
 ```{r setup comp7}
@@ -488,6 +547,8 @@ comp7_table <- function(x ) {
   table <- composite_data |> 
     select(-question_id) |> 
   gt(rowname_col = "question_label")  |> 
+        tab_header( 
+      title = glue::glue("{range8}")) |> 
   tab_stubhead(label = md("**Care Transition \n Composite**"))|> 
     gt::cols_width(question_label ~ px(30) , 
                  everything() ~px(40)) |> 
@@ -552,6 +613,8 @@ q18_function <- function(x ) {
   table <- composite_data |> 
     select(-question_id) |> 
   gt(rowname_col = "question_label")  |> 
+  tab_header( 
+      title = glue::glue("{range8}")) |> 
   tab_stubhead(label = md("**HCAHPS Global Items**"))|> 
     gt::cols_width(question_label ~ px(50) , 
                  everything() ~px(40)) |> 
@@ -560,7 +623,7 @@ q18_function <- function(x ) {
     columns = "star_rating"
   ) |> 
   tab_spanner(
-    label = md("**Your Hospital's \n Adjusted Score**") ,
+    label = md("**Your Hospital's Adjusted Score**") ,
     columns = c(rating_0_6:rating_9_10)
   ) |> 
   tab_spanner(
@@ -617,6 +680,8 @@ q19_function <- function(x ) {
   table <- composite_data |> 
     select(-question_id) |> 
   gt(rowname_col = "question_label")  |> 
+ tab_header( 
+      title = glue::glue("{range8}")) |> 
   tab_stubhead(label = md("**HCAHPS Global \n Items**"))|> 
     #gt::cols_width(question_label ~ px() ,
                 # everything() ~px(40)) |> 
@@ -717,6 +782,10 @@ HCAHPS Summary Star Rating: `r star`
 ```{r composite1 table }
 table1
 ```
+*	“DNR” indicates that a CAH did not report data in at least 10 of the 12 months for the current reporting period.
+*	“*” indicates that the CAH did not have eligible patients to survey or enough data to meet CMS criteria for analyses.
+*	“N/C” indicates that less than 100 surveys were returned in the reporting period so a Star Rating was not able to be calculated. 
+* “#” indicates that the CAH did not have a signed MOU at the time of reporting for this period.
 
 ```{r composite1 figure}
 print(plots_list$Composite_1)
@@ -728,6 +797,10 @@ print(plots_list$Composite_1)
 table2 
 
 ```
+*	“DNR” indicates that a CAH did not report data in at least 10 of the 12 months for the current reporting period.
+*	“*” indicates that the CAH did not have eligible patients to survey or enough data to meet CMS criteria for analyses.
+*	“N/C” indicates that less than 100 surveys were returned in the reporting period so a Star Rating was not able to be calculated. 
+* “#” indicates that the CAH did not have a signed MOU at the time of reporting for this period.
 
 ```{r composite2 figure}
 print(plots_list$Composite_2)
@@ -738,6 +811,10 @@ print(plots_list$Composite_2)
 ```{r composite3 table}
  table3
 ```
+*	“DNR” indicates that a CAH did not report data in at least 10 of the 12 months for the current reporting period.
+*	“*” indicates that the CAH did not have eligible patients to survey or enough data to meet CMS criteria for analyses.
+*	“N/C” indicates that less than 100 surveys were returned in the reporting period so a Star Rating was not able to be calculated. 
+* “#” indicates that the CAH did not have a signed MOU at the time of reporting for this period.
 
 ```{r composite3 figure}
 print(plots_list$Composite_3)
@@ -749,6 +826,10 @@ print(plots_list$Composite_3)
 ```{r composite5 table }
 table5
 ```
+*	“DNR” indicates that a CAH did not report data in at least 10 of the 12 months for the current reporting period.
+*	“*” indicates that the CAH did not have eligible patients to survey or enough data to meet CMS criteria for analyses.
+*	“N/C” indicates that less than 100 surveys were returned in the reporting period so a Star Rating was not able to be calculated. 
+* “#” indicates that the CAH did not have a signed MOU at the time of reporting for this period.
 
 ```{r composite5 figure}
 print(plots_list$Composite_5)
@@ -764,6 +845,10 @@ print(plots_list$Composite_5)
 table6
 
 ```
+*	“DNR” indicates that a CAH did not report data in at least 10 of the 12 months for the current reporting period.
+*	“*” indicates that the CAH did not have eligible patients to survey or enough data to meet CMS criteria for analyses.
+*	“N/C” indicates that less than 100 surveys were returned in the reporting period so a Star Rating was not able to be calculated. 
+* “#” indicates that the CAH did not have a signed MOU at the time of reporting for this period.
 
 ```{r composite 6 figure}
 print(plots_list$Composite_6)
@@ -777,6 +862,10 @@ print(plots_list$Composite_6)
 
 table7
 ```
+*	“DNR” indicates that a CAH did not report data in at least 10 of the 12 months for the current reporting period.
+*	“*” indicates that the CAH did not have eligible patients to survey or enough data to meet CMS criteria for analyses.
+*	“N/C” indicates that less than 100 surveys were returned in the reporting period so a Star Rating was not able to be calculated. 
+* “#” indicates that the CAH did not have a signed MOU at the time of reporting for this period.
 
 ```{r composite 7 figure}
 print(plots_list$Composite_7)
@@ -791,6 +880,10 @@ print(plots_list$Composite_7)
 
 tableq8
 ```
+*	“DNR” indicates that a CAH did not report data in at least 10 of the 12 months for the current reporting period.
+*	“*” indicates that the CAH did not have eligible patients to survey or enough data to meet CMS criteria for analyses.
+*	“N/C” indicates that less than 100 surveys were returned in the reporting period so a Star Rating was not able to be calculated. 
+* “#” indicates that the CAH did not have a signed MOU at the time of reporting for this period.
 
 ```{r q8 figure}
 print(plots_list$Q8)
@@ -803,6 +896,10 @@ print(plots_list$Q8)
 
 tableq9
 ```
+*	“DNR” indicates that a CAH did not report data in at least 10 of the 12 months for the current reporting period.
+*	“*” indicates that the CAH did not have eligible patients to survey or enough data to meet CMS criteria for analyses.
+*	“N/C” indicates that less than 100 surveys were returned in the reporting period so a Star Rating was not able to be calculated. 
+* “#” indicates that the CAH did not have a signed MOU at the time of reporting for this period.
 
 ```{r figure}
 print(plots_list$Q9)
@@ -818,6 +915,10 @@ print(plots_list$Q9)
 
 q18_table
 ```
+*	“DNR” indicates that a CAH did not report data in at least 10 of the 12 months for the current reporting period.
+*	“*” indicates that the CAH did not have eligible patients to survey or enough data to meet CMS criteria for analyses.
+*	“N/C” indicates that less than 100 surveys were returned in the reporting period so a Star Rating was not able to be calculated. 
+* “#” indicates that the CAH did not have a signed MOU at the time of reporting for this period.
 
 ```{r q18 figure}
 print(plots_list$Q18)
@@ -831,6 +932,10 @@ print(plots_list$Q18)
 
 q19_table
 ```
+*	“DNR” indicates that a CAH did not report data in at least 10 of the 12 months for the current reporting period.
+*	“*” indicates that the CAH did not have eligible patients to survey or enough data to meet CMS criteria for analyses.
+*	“N/C” indicates that less than 100 surveys were returned in the reporting period so a Star Rating was not able to be calculated. 
+* “#” indicates that the CAH did not have a signed MOU at the time of reporting for this period.
 
 ```{r q19 figure}
 print(plots_list$Q19)

@@ -334,11 +334,9 @@ Templates will be used to create both state and CAH-level reports. No regular up
 #the data file for this quarter
 #load(glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/HCAHPS/{quarter}/R/Data/hcahps_{quarter}_2024-01-30.RData"))  
 
-load(glue::glue(here::here("R/Data/{quarter}/hcahps_update_{quarter}_2024-05-23.RData")))
+#load(glue::glue(here::here("R/Data/{quarter}/hcahps_update_{quarter}_2024-05-23.RData")))
 
-# ## 16 may dataset has the \\' in CAH names, see if that helps , also used the OLD MOU list (didn't fix it with either of those changes )
-# load(paste0(fmt_folder, "MBQIP Reports/Quarterly Reports/HCAHPS/2022 Q3/R/Data/hcahps_2022Q3_2023-05-16.RData"))  
-# 
+#load(glue::glue(here::here("R/Data/{quarter}/hcahps_update_{quarter}_2024-05-31.RData")))
 
 ## removing apostrophes for the meantime til I can figure out why they don't work 
 hcahps_master_data <- hcahps_master_data %>% 
@@ -380,6 +378,8 @@ range1 <- "Q1 2021 - Q4 2021"
 #Make sure no updates are needed to the benchmarks
 #This should only be necessary in the Q1 reports, when new benchmarks from the previous year's data will be created
 bms <- readxl::read_xlsx(paste0(fmt_folder, "MBQIP Reports/Report Creation and Processes/Report Benchmarks_10_04_23.xlsx"))
+
+year <- 2023 ##2024-05-30: year for the benchmarks
 
 #these five values affect the spreadsheets
 start_q <- "3Q2022"
@@ -447,7 +447,9 @@ for (st in states){
     star <- ifelse(is.na(cah_star)==TRUE, "N/C", as.character(cah_star))
     state_name <- unique(state_data$state_name)[1]
     #rmarkdown::render(#input = paste0(fmt_folder, "MBQIP Reports/Quarterly Reports/HCAHPS/", folder, "/R/HCAHPS CAH Report Template.Rmd"),
-                       rmarkdown::render(input = here::here("R/hcahps_cah_template.Rmd"), ## updates2 has the new * version 
+                       #rmarkdown::render(input = here::here("R/hcahps_cah_template.Rmd"),
+                        rmarkdown::render(input = here::here("R/hcahps_cah_template.qmd"),
+                                                           ## updates2 has the new * version 
                        #input = paste0("C:/Users/furuk015/Desktop/projects/MBQIP_update/R/hcahps_cah_template.Rmd"),
                       output_format = "pdf_document",
                       output_file = paste0(st, "_", cah_id,"_", name, "_HCAHPS_", p8,".pdf"),
