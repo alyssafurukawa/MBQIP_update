@@ -1,0 +1,198 @@
+---
+title: "**MBQIP Measures Hospital Report**"
+author: "`r report_period`"
+date: "**`r name`**"
+output: pdf_document
+classoption: landscape
+geometry: margin=0.5in
+fontsize: 12pt
+header-includes:
+- \usepackage{booktabs}
+- \usepackage{longtable}
+- \usepackage{array}
+- \usepackage{multirow}
+- \usepackage{wrapfig}
+- \usepackage{float}
+- \usepackage{colortbl}
+- \usepackage{pdflscape}
+- \usepackage{tabu}
+- \usepackage{threeparttable}
+- \usepackage{threeparttablex}
+- \usepackage[normalem]{ulem}
+- \usepackage{makecell}
+- \usepackage{xcolor}
+- \usepackage{titling}
+- \pretitle{\begin{center}\LARGE\includegraphics[width=10cm]{flex_full_logo.png}\\[\bigskipamount]}
+- \posttitle{\end{center}}
+- \renewcommand\maketitlehooka{\vspace{-2ex}}
+- \renewcommand\maketitlehookb{\vspace{-5ex}}
+- \renewcommand\maketitlehookc{\vspace{-5ex}}
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r edtc maketable,echo=FALSE, results="hide", message=FALSE, warning=FALSE, include=TRUE}
+periods <- c(4, 3, 2, 1)
+max_per <- max(cah$period, na.rm=TRUE)
+
+#if a CAH does not have 4 quarters of data the table code will cause an error
+#so need to add data with NA for those quarters, but don't want this affect the st/nat calcs
+#so adding these extra empty periods here
+#also need to join state/nat data if period 4 is missing.. probably a better way to do this, but works for now..
+
+for (per in periods){
+  
+  if (!(per %in% cah$period)){
+    
+      if(per==4) {
+        st_nt <- state_data %>% #get state and natl data
+          filter(period==4) %>%
+          slice(1) %>%
+          select(period, st_denom:state_name)
+        
+        st_agg <- cah %>% #get state 4Q aggregate 
+          filter(period== max_per) %>%
+          select(provider_id:alledtc_mou_allq_rate) %>%
+          mutate(period=4) %>%
+          mutate(across(c(denom:alledtc, quarter:report), ~NA)) %>%
+          inner_join(st_nt, by="period")
+        
+        cah <- cah %>% rbind(st_agg)
+        
+      } else {
+        
+      cah <- cah %>%
+        add_row(medicare_number= unique(.$medicare_number), cah_state= unique(.$cah_state), period= per)
+      }
+   }
+}
+
+#table code
+for (per in periods){
+  edtc_temp <- cah %>%
+    filter(period==per) %>%
+    pivot_longer(cols=c(alledtc_rate, edtc1_rate:edtc8_rate), names_to= paste0("measure_", per), 
+                 values_to= paste0("score_", per)) %>%
+    select(contains("measure_"), contains("score_"))
+  
+  assign(paste0("denom_", per), cah %>% filter(period==per) %>% select(denom))
+  
+  if ("measure_4" %in% colnames(edtc_temp)) {
+    
+    assign("denom_st", cah %>% filter(period==4) %>% select(st_denom))
+    assign("denom_nt", cah %>% filter(period==4) %>% select(nt_denom))
+    
+    #cah all quarters
+    edtc_allq <- cah %>%
+      filter(period==per) %>%
+      pivot_longer(cols=c(alledtc_mou_allq_rate, edtc1_mou_allq_rate:edtc8_mou_allq_rate), names_to= "measure_all",
+                   values_to= "score_all") %>%
+      select(measure_all, score_all)
+    
+    #state avg current quarter
+    edtc_st <- cah %>%
+      filter(period==per) %>%
+      pivot_longer(cols=c(st_alledtc_rate, st_edtc1_rate:st_edtc8_rate), names_to= "measure_st", values_to= "score_st") %>%
+      select(measure_st, score_st)
+    #state reporting by measure
+    edtc_st_rep <- cah %>%
+      filter(period==per) %>%
+      pivot_longer(cols=c(alledtc_report,edtc1_report:edtc8_report), names_to= "rep_measures", values_to="st_reporting") %>%
+      select(rep_measures, st_reporting)
+    #state 90th percentile
+    edtc_st_90 <- cah %>%
+      filter(period==per) %>%
+      pivot_longer(cols=c(st_p90_alledtc, st_p90_edtc1:st_p90_edtc8), names_to= "percentile_st", values_to= "perc_st") %>%
+      cbind(edtc_st, edtc_st_rep) %>%
+      #mutate(st_reporting= mean(st_report, na.rm = TRUE)) %>% #could throw NaN here... fix?
+      select(st_reporting, score_st, perc_st)
+    
+    #nat avg current quarter
+    edtc_nat <- cah %>%
+      filter(period==per) %>%
+      pivot_longer(cols=c(nt_alledtc_rate, nt_edtc1_rate:nt_edtc8_rate), names_to= "measure_nt", values_to= "score_nt") %>%
+      select(measure_nt, score_nt)
+    #nat reporting by measure
+    edtc_nat_rep <- cah %>%
+      filter(period==per) %>%
+      pivot_longer(cols=c(nt_alledtc_report, nt_edtc1_report:nt_edtc8_report), names_to= "rep_measures",
+                   values_to="nt_reporting") %>%
+      select(rep_measures, nt_reporting)
+    #nat 90th percentile
+    edtc_nat_90 <- cah %>%
+      filter(period==per) %>%
+      pivot_longer(cols=c(nt_p90_alledtc, nt_p90_edtc1:nt_p90_edtc8), names_to= "percentile_nt", values_to= "perc_nt") %>%
+      cbind(edtc_nat, edtc_nat_rep) %>%
+      #mutate(nt_reporting= mean(nt_report, na.rm = TRUE)) %>% #could throw NaN here... fix?
+      select(nt_reporting, score_nt, perc_nt)
+      
+    edtc_temp <- cbind(edtc_temp, edtc_allq, edtc_nat_90, edtc_st_90)
+    table_data1 <- data.frame(edtc_temp) 
+  } else {
+  table_data1 <- cbind(table_data1, edtc_temp)
+  }
+}
+
+#add benchmarks (new 11/24)
+table_data1 <- table_data1 %>%
+  mutate(measure= str_remove(measure_4, "_rate"),
+         measure= ifelse(measure=="alledtc", "all_edtc", measure)) %>%
+  left_join(bms, by="measure") %>%
+  mutate(perc_nt= benchmark/100) %>%
+  select(-c(measure:source))
+
+#now some final transformations + additions
+
+table_data2 <- table_data1 %>% 
+  select(score_1, score_2, score_3, score_4, score_all, st_reporting:perc_st, nt_reporting:perc_nt) %>%
+  mutate(across(score_1:score_all, ~ifelse(is.na(.x)==TRUE, "N/A", rndup(as.numeric(.x)))), 
+         st_reporting= ifelse(is.na(st_reporting)==TRUE, "N/A", as.character(st_reporting)),
+         across(c(score_st, perc_st, score_nt, perc_nt), ~ifelse(is.na(.x)==TRUE, "N/A", rndup(as.numeric(.x)))),
+         nt_reporting= ifelse(is.na(nt_reporting)==TRUE, "N/A", format(as.numeric(nt_reporting), big.mark = ","))) %>%
+  add_row(score_1= ifelse(is.na(denom_1)==TRUE, "N/A",  paste0("N=", prettyNum(denom_1, big.mark=","))), 
+          score_2= ifelse(is.na(denom_2)==TRUE, "N/A",  paste0("N=", denom_2)),
+          score_3= ifelse(is.na(denom_3)==TRUE, "N/A",  paste0("N=", denom_3)), 
+          score_4= ifelse(is.na(denom_4)==TRUE, "N/A",  paste0("N=", denom_4)),
+          score_all= ifelse(is.na(mean(cah$denom_mou_allq, na.rm=TRUE))==TRUE, "N/A",  
+                            paste0("N=", mean(cah$denom_mou_allq, na.rm=TRUE))),
+          st_reporting= ifelse(is.na(denom_st)==TRUE, "N/A",  paste0("N=", prettyNum(as.numeric(denom_st), big.mark = ","))), 
+          nt_reporting= ifelse(is.na(denom_nt)==TRUE, "N/A",  paste0("N=", prettyNum(as.numeric(denom_nt), big.mark=","))),
+          score_st="", perc_st="", score_nt="", perc_nt="") %>% #added bottom row with N's
+  mutate(id_col= cah_id, #if I just reference the value, it universally transforms the column
+         score_4= ifelse(id_col %in% nomou, "#", score_4),
+         score_3= ifelse(id_col %in% nomou_p3, "#", score_3), #change to # if CAH has no MOU
+         score_2= ifelse(id_col %in% nomou_p2, "#", score_2),
+         score_1= ifelse(id_col %in% nomou_p1, "#", score_1),
+         score_all= ifelse(paste0(score_1, score_2, score_3, score_4)=="####", "#", score_all)) %>% 
+  #if all Q's are no mou, change allq to "#" as well-- probably make this cleaner
+  select(-id_col)
+
+#add final row/column names
+table_data <- cbind(c("EDTC-All"," "," "," "," "," "," "," "," ",  " "),
+                   c("Composite","Home Medications","Allergies and/or Reactions",
+                     "Medications Administered in ED","ED Provider Note",
+                     "Mental Status/Orientation Assessment","Reason for Transfer and/or Plan of Care",
+                     "Tests and/or Procedures Performed","Tests and/or Procedures Results",
+                     "Total Medical Records Reviewed (N)"),
+                   table_data2) %>%
+  set_colnames(c("", "MBQIP Quality Measure", p1,p2,p3,p4,"Aggregate for All Four Quarters",
+               "# CAHs Reporting","Average Current Quarter","90th Percentile",
+               "# CAHs Reporting","Average Current Quarter","Average Current Quarter")) #edited 11/24
+
+table <- kable(table_data, format = "latex", booktabs = TRUE, linesep="") %>%
+  kable_styling(latex_options = c("striped","scale_down", "HOLD_position"), stripe_index = c(1,3,5,7,9),
+                position = "center",
+                font_size = 11, stripe_color = "#ddf1f7") %>%
+  add_header_above(c(" "=2, "Your Hospital's Performance by Quarter"=5,"State Current Quarter"=3, "National Current \nQuarter"=2,
+                     "Bench-\nmark"= 1), color = "#000000", bold = TRUE) %>% 
+  column_spec(1, width = "2cm") %>%
+  column_spec(2, width = "7cm") %>%
+  column_spec(3:7, border_left = TRUE) %>% 
+  column_spec(8:10, border_right = TRUE) %>%
+  column_spec(3:13, width = "1.5cm") %>%
+  row_spec(10, color = "#14416d") 
+
+```

@@ -1,0 +1,1178 @@
+---
+title: "mbqip_measures_cah_script"
+author: "alyssa furukawa"
+date: "2024-06-05"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+```{r, message=FALSE}
+#devtools::install_github("ReverieNB/FMT-Package") #update/install FMT package
+library(FMT2)
+#library(FMT)
+librarian("reports")
+roboto <- function(){
+  sysfonts::font_add(family="Roboto Condensed", regular="C:/Users/furuk015/AppData/Local/Microsoft/Windows/Fonts/RobotoCondensed-Regular.ttf")
+  showtext::showtext_auto()
+}
+roboto()
+
+library(weights)
+library(huxtable)
+library(gridExtra)
+library(here)
+library(htmlTable)
+library(gt)
+
+
+#renv::init()
+
+options(scipen = 999)
+```
+
+EDTC data import
+```{r}
+quarter <- "2024Q1"
+p3 <- "Q4 2023" ## 20 dec 22: they are not in the Q1 22 script but the periods with different nomou lists are weird and some of them work and some don't, try to make consistent -af 
+p2 <- "Q3 2023"
+p1 <- "Q2 2023"
+#lastQ_data <- "MBQIP Reports/Quarterly Reports/EDTC/2023_Q4/R/Data/edtcdata_2023_Q4_2024-03-28.RData"
+edtc_lastQ_data <- "MBQIP Reports/Quarterly Reports/EDTC/2023_Q4/R/Data/edtcdata_2023_Q4_2024-03-28.RData"
+#^ Update these manually each quarter ^
+## cvan/should I change the "lastQ_data" to specify EDTC vs OPIP? probably. testing it out
+
+list <- readxl::read_xlsx(paste0(fmt_folder, "MBQIP Reports/CAH List with MOU_FMT 6.11.24.xlsx"), sheet = "CAHs with MOU") %>%
+  clean_names() %>% 
+  mutate(provider_id= as.numeric(medicare_number)) 
+#^ check if new CAH/MOU list each quarter ^
+
+moulist <- list %>%
+  select(provider_id, medicare_number, cah_name, cah_city, cah_state, cahzip)
+
+nrow(moulist) #1349
+
+no_moulist <- list %>% 
+  filter(!is.na(quarterly_measures)) %>%
+  select(provider_id, start= quarterly_measures) %>%
+  mutate(start= str_remove(start, "Start "),
+         start= as.numeric(paste0(str_sub(start, 4), str_sub(start, 2, 3))))
+
+#CAHs with no MOU for each period -- can't use that data but need to have a report
+nomou <- no_moulist %>% #Q1 2023
+  filter(start > as.numeric(paste0(str_sub(quarter, end=-3), str_sub(quarter, 6)))) %>%
+  select(provider_id) %>% 
+  pull()
+
+nomou_p3 <- no_moulist %>% #Q4 2022
+  filter(start > move_back(quarter, 1)) %>%
+  select(provider_id) %>% 
+  pull()
+
+nomou_p2 <- no_moulist %>% #Q3 2022
+  filter(start > move_back(quarter, 2)) %>%
+  select(provider_id) %>% 
+  pull()
+
+#nomou_p2 <- no_moulist %>% #Q4 2021
+ # filter(start > move_back(quarter, 2)) %>%
+ # select(provider_id) %>% 
+ # pull() 3 nov 22: this doesn't work for some reason? -af 
+
+#nomou_p2 <- no_moulist %>% #Q3 2021
+ # filter(start > as.numeric(paste0(str_sub(p2, 4), str_sub(p2, 2, 3)))) %>%
+#2021" format instead of "2021Q4" -af
+
+
+#nomou_p1 <- no_moulist %>% #Q3 2021
+#  filter(start > move_back(quarter, 3)) %>%
+ # select(provider_id) %>% 
+ # pull() 
+####3 nov 22: this doesn't work for some reason? -af 
+
+nomou_p1 <- no_moulist %>% #Q2 2022
+  filter(start > as.numeric(paste0(str_sub(p1, 4), str_sub(p1, 2, 3)))) %>%
+  pull(provider_id) ##3 nov 22: but this version does, as long as the quarter p1 is in "Q3 2021" format instead of "2021Q3" -af
+
+#Recently closed CAHs, will be removed from previous Q data to prevent report generation
+closed <- c("441324" , "281330", "251329" ,
+"251306" , "261315" , "041304" ,
+ "281321" , "421303" , "151335" , "451345" ,"451360" , "441311" ,
+"371324" ,
+"231317" ,
+"191303" ,
+"171340" ,
+"151302" ,
+"19303" ) #last removed CAHs
+
+measures <- c("denom","edtc1","edtc2","edtc3","edtc4","edtc5","edtc6","edtc7","edtc8","alledtc")
+```
+
+
+```{r}
+
+data_folder <- file.path(glue::glue("C:/Users/furuk015/Desktop/EDTC/data/{quarter}/")) #UPDATE LOCATION EACH Q
+##2024-05-13: updated with "file.path" and "glue" to automatically update file path based on {quarter} -af 
+
+
+  files <- list.files(path = data_folder, full.names = FALSE)
+
+states <- c()
+
+for (i in 1:length(files)){
+  temp <- str_sub(files[i], 1, 2)
+  states <- c(states, temp)
+}
+
+```
+
+
+```{r}
+#3 july 23: Renamed the data sheets for GA,  TX 
+edtc_new <- tibble() 
+
+for (st in states){
+  file <- readxl::read_xlsx(paste0(data_folder, "/",st,".xlsx"), sheet = "EDTC Reporting Template") %>% clean_names()
+  ncah_st <- as.numeric(file[3,3]) 
+  temp <- cbind(file[9:(length(file$x2)),1:12],rep(st,length(file$x2)-8)) %>% 
+    set_colnames(c("ccn", "hospital_name", measures, "state")) %>%
+    filter(is.na(hospital_name) == FALSE|is.na(ccn) == FALSE) %>%#, 
+    mutate(across(denom:alledtc, as.numeric),
+           provider_id= as.numeric(ccn)) 
+  edtc_new <- rbind(edtc_new, temp)
+}
+
+#These should likely be deleted, but make sure there's nothing here we want (i.e. data for a CAH)
+missing <- edtc_new %>% filter(is.na(hospital_name)|is.na(ccn)) #can remove all
+
+edtc_new <- edtc_new %>% filter(!(is.na(hospital_name)|is.na(ccn))) ## 2024-05-13: 1240 because we're missing states
+
+length(unique(edtc_new$state)) #should be 45, 41 we're missing 4
+
+nrow(edtc_new)  ##1358
+
+
+
+
+
+```
+
+
+```{r}
+edtc_mou <- moulist %>%
+  full_join(edtc_new, by="provider_id")
+
+nrow(edtc_mou) #1366
+
+### CHECK FOR MISSING IDs ###
+#missing ID= unsuccessful join with MOU list using provider_id.. fix this field and then redo the join                                                                                    
+missing <- edtc_mou %>% filter(is.na(medicare_number)==TRUE)
+nrow(missing) #17
+
+### FIXES ###
+#Most missing are in LA, they put wrong ID for all
+edtc_fixed <- edtc_new %>%
+  mutate(provider_id= case_when(
+    ccn=='19300' ~ 191300,
+    ccn=='19301' ~ 191301,
+    ccn=='19302' ~ 191302,
+    ccn=='19303' ~ 191303,
+    ccn=='19304' ~ 191304,
+    ccn=='19305' ~ 191305,
+    ccn=='19306' ~ 191306,
+    ccn=='19307' ~ 191307,
+    ccn=='19309' ~ 191309,
+    ccn=='19310' ~ 191310,
+    ccn=='19311' ~ 191311,
+    ccn=='19312' ~ 191312,
+    ccn=='19313' ~ 191313,
+    ccn=='19314' ~ 191314,
+    ccn=='19315' ~ 191315,
+    ccn=='19316' ~ 191316,
+    ccn=='19317' ~ 191317,
+    ccn=='19319' ~ 191319,
+    ccn=='19320' ~ 191320,
+    ccn=='19321' ~ 191321,
+    ccn=='19322' ~ 191322,
+    ccn=='19323' ~ 191323,
+    ccn=='19324' ~ 191324,
+    ccn=='19325' ~ 191325,
+    ccn=='19326' ~ 191326,
+    TRUE ~ provider_id))
+
+#There are still some remaining
+missing2 <- missing %>% filter(state != "LA") %>% print() ## 15
+
+#These have incorrect ccns in the EDTC data, change to match MOU list
+edtc_fixed <- edtc_fixed %>%
+  mutate(provider_id= case_when(
+    ccn== '123456' ~ 251334, #Choctaw Regional Medical Center
+    ccn== '461313' ~ 461333, #Garfield Memorial Hospital
+    ccn== '050296' ~ 051337, #Hazel Hawkins Memorial Hospital
+    ccn== '271239' ~ 271329, #Madison Valley Medical Center
+    ccn== '390130' ~ 391317, #DLP Conemaugh Miners Hospital
+    ccn== '230118' ~ 231340, #McLaren Thumb Regional Hospital
+    TRUE ~ provider_id))
+
+
+#now remerge with MOU list
+edtc_mou <- moulist %>%
+  full_join(edtc_fixed, by="provider_id")
+
+missing <- edtc_mou %>% filter(is.na(medicare_number))
+nrow(missing) #17 
+
+print(missing$provider_id)
+print(missing$hospital_name)
+
+#noMOU: 41332  41333  51338 181333 191308 251338 261313 351364 321312 441323 451381 451395 
+#closed: 191318 261315 281330  441324
+
+### CHECK FOR DUPLICATES ###
+#These result from CAHs in the EDTC data having the same ids
+dupes <- edtc_mou %>% get_dupes(provider_id) #2024-05-13: 0 dupes
+## 12 july 23: new duplicate problem in AR due to a name change (041302, changed to Dardanelle Regional Medical Center) we're omitting this one entirely this quarter because their data is wrong anyway -af 
+
+edtc_fixed <- edtc_fixed %>% 
+  mutate(provider_id= case_when(
+    provider_id== 201308 & state=="NV" ~ 291308, #same problems as always for ME/NV
+    provider_id== 201309 & state=="NV" ~ 291309,
+    provider_id== 201304 & state=="NV" ~ 291304,
+    provider_id== 201306 & state=="NV" ~ 291306,
+    hospital_name=="Adena Pike Medical Center" ~ 361334, #wrong ccn for this one (OH)
+    provider_id == 250097 & state == "MS" ~ 251305 ,
+    provider_id == 252329 & state == "MS" ~ 251329 ,
+     TRUE ~ provider_id)) # %>% 
+  # filter(provider_id !=41302 ) ## to omit that one wrong AR CAH
+
+#remerge data
+edtc_mou <- moulist %>%
+  full_join(edtc_fixed, by="provider_id")
+
+dupes <- edtc_mou %>% get_dupes(provider_id) #none
+
+### Check for data input problems ###
+#this may catch some errors in the data we were given by finding unexpected NAs
+missing <- edtc_mou %>%
+  filter(if_any(edtc1:alledtc, ~is.na(.x))) %>% 
+  #select(provider_id, cah_state, edtc1:alledtc) %>% 
+  mutate(total = select(., edtc1:alledtc) %>% 
+           rowSums(na.rm = TRUE)) %>% 
+  filter(total > 0) 
+
+
+### Check for another error in IDs ###
+#This will see if they're the wrong length (most likely a zero is missing)
+#It will mess up the pdf reporting if not fixed because the CAH will have 2 unique IDs
+
+id_error <- edtc_mou %>%
+  filter(nchar(medicare_number) != 6) #2023-11-13: 1, usually centura 061344, fixed below
+
+edtc_mou <- edtc_mou %>%
+  mutate(medicare_number= ifelse(medicare_number=="61344", "061344", medicare_number))
+
+#Do any CAHs have EDTC measure submissions greater than # of reports submitted? Or an all EDTC measure greater than any of the other measures?
+denom_error <- edtc_mou %>% filter(if_any(edtc1:alledtc, ~.x>denom)|if_any(edtc1:edtc8, ~alledtc>.x)) |> 
+  mutate(notes = "single EDTC measure higher than denominator OR allEDTC measure greater than any single measure")
+# 2023-11-15: WI- 521358 
+## 2023-11-16: Wisconsin fixed, no other errors 
+
+#alledtc_error <- edtc_mou %>% filter(if_all(edtc1:edtc8, ~alledtc<.x-10))
+
+
+
+
+missing <- missing %>% 
+  select(provider_id:state) |> 
+  mutate(notes = "missing")
+
+
+##per email with Megan 2024-02-21: " think the only fail-safe way would be to take the difference between the denominator and each of the sub-components (1-8), and sum those - and then note any where the All value is lower than the denom minus the sum of the differences.
+
+#It's hard to describe, but I think that's the only way we would KNOW that it's actually an error - otherwise, it's just us saying that it looks funny (but it's still plausible)." 
+##total sum of differeneces then subtract from denom (denom-sumdiff) then compare to ALL EDTC variable (alledtc>(denom-sumdiff))
+
+difference_sums <- edtc_mou |> 
+  group_by(provider_id) |> 
+  mutate(total_diff = sum(denom - across(edtc1:edtc8)) ,
+         alledtc_check = if_else(alledtc >= denom-total_diff , "GOOD" , "ERROR"))
+
+alledtc_error <- difference_sums |> 
+  filter(alledtc_check == "ERROR") |> 
+  select(-total_diff , -alledtc_check) |> 
+  mutate(notes = "all edtc lower than denominator-sum of differences")
+
+
+rbind(denom_error, missing , alledtc_error) %>% select(medicare_number, cah_name, cah_state, denom:alledtc , notes) %>% write_csv(here::here(glue::glue("outputs/{quarter} Data Errors {Sys.Date()}.csv"))) #none after fixing WI
+
+### Final data ###
+edtc_final_edits <- edtc_mou %>% 
+  filter(is.na(medicare_number)==FALSE ) %>% #remove 5 from above with missing IDs
+  select(provider_id:hospital_name, denom:alledtc) %>%
+  select(-c(hospital_name, ccn)) %>%
+  mutate(period= 4, quarter= quarter)# %>%
+ # bind_rows(nv_add) #from last quarter, shouldn't need this here? Q 2 2022 add in new nevada data (??)
+  #bind_rows(nh_add , ok_add , mn_add) ##this is going to duplicate these specific CAHs, will have to dedup in the next chunk -af 
+
+nrow(edtc_final_edits) #should match rows of MOU list, unless it contains extra data (like NV q4)
+## 2023-11-16: 1344, matches
+## 2024-02-15: 1347 matches 
+## 2024-06-18: 1349 
+```
+
+
+Now that this quarter's new data has been read in, it's combined with data for previous quarters. The reports require the most recent year of data, so they will use the data that was just created and the previous three quarters. The most recent quarter's data is referred to as "Period 4", the next most recent as "Period 3", and so on, no matter which quarter the data comes from. The code below reads in the previous quarters' data and combines it with the new data. The name and location of the file will need to be updated each quarter.
+
+In addition, there are a few recent updates that affect previous quarters of data. Those one-time changes are made to the master data file below, which will affect CAH, state, and national totals. Some related cold may need to be manually adjusted (see notes).
+
+```{r}
+#Data used for previous quarter's report -- UPDATE EVERY QUARTER
+load(paste0(fmt_folder, edtc_lastQ_data)) 
+
+st_names <- tibble(cah_state=state.abb, state_name=state.name)
+
+
+
+## 2024-02-08: there are two CAHs that need data upadted from LAST quarter (2023 Q3) so it's probably going to have to be updated here since this is where the errors are -af 
+
+
+#Read previous 3 quarters of data and move them back one time period 
+previous_qs <- edtc_master_data %>% ##2024-06-18: next quarter change from master to main -af 
+#previous_qs <- edtc_main_data |> 
+  filter(period != 1) %>% #drop period 1 from last report
+################################################
+ # filter(!(cah_state=="NV" & quarter=="2021Q4")) %>% #remove next report
+ ################################################
+  #filter(!(cah_state=="NH" & quarter=="2022Q1" & provider_id == 301308 ) ,
+       #  !(cah_state == "OK" & quarter == "2022Q1" & provider_id == 371326 )  ) %>% 
+         #!(cah_state== "MN" &
+          # quarter == "2021Q4" & provider_id %in% c(241326 , 
+                                               #   241330 ,
+                                                #  241349 , 
+                                                #  241351 ,
+                                               #   241368))) #remove this Q4 2022 report   %>% 
+  mutate(period= period-1 ,
+          denom = case_when(provider_id == 301300 & quarter == "2023Q3"  ~ 53,
+                      provider_id == 301310 & quarter == "2023Q3" ~ 41 , 
+                     TRUE ~ denom)) %>% ## adjusting data errors from 2023 Q3 -af 
+  select(provider_id:quarter) #this makes rows the same as new data so they can be joined
+#but removes previous state and nat calculations, so they need to be done again
+
+previous_qs |> filter(provider_id == 301310 | provider_id == 301300) |> view() ## checking the CAHs I edited -af
+
+edtc_combined <- edtc_final_edits %>% 
+  rbind(previous_qs) %>%
+  filter(!(medicare_number %in% closed)) %>% #remove all data for newly closed CAHs
+  mutate(cah_name= str_trim(cah_name)) #remove extra spaces from beginning/end of name
+
+#One additional check-- make sure these values are the same for each CAH in all periods, otherwise PDF printing will have errors
+#I actually don't think this checking needs to happen anymore, I adjusted the printing code and it should avoid needing to make these correction
+edtc_difs <- edtc_combined %>%
+  group_by(medicare_number) %>%
+  mutate(dif= length(unique(cahzip))+length(unique(cah_state))+length(unique(cah_city))) %>%
+  filter(dif != 3) %>%
+  arrange(provider_id) ##2023-11-16: none 
+
+#No need to keep the corrections from previous reports
+edtc_final <- edtc_combined %>%
+  mutate(
+    cah_city= case_when(
+      medicare_number=="041314" ~ "DeWitt", #made quite a few recent updates. 
+      medicare_number=="111337" ~ "Elberton", #hopefully less of a big deal going forward.
+      medicare_number=="121302" ~ "Kapaau",
+      medicare_number=="141331" ~"Du Quoin",
+      medicare_number=="161358" ~ "Corydon",
+      medicare_number=="171343" ~ "Johnson City",
+      medicare_number=="171355" ~ "WaKeeney",
+      medicare_number=="171377" ~ "Smith Center",
+      medicare_number=="181325" ~ "Greensburg",
+      medicare_number=="191303" ~ "Napoleonville",
+      medicare_number=="191314" ~ "Tallulah",
+      medicare_number=="231307" ~ "L'Anse",
+      medicare_number=="251327" ~ "Hazlehurst",
+      medicare_number=="261302" ~ "Fredericktown",
+      medicare_number=="261330" ~ "Ste. Genevieve",
+      medicare_number=="281329" ~ "O'Neill",
+      medicare_number=="361331" ~ "Washington Court House",
+      medicare_number=="391309" ~ "Susquehanna Depot",
+      medicare_number=="431332" ~ "De Smet",
+      medicare_number=="441305" ~ "Lafayette",
+      medicare_number=="451350" ~ "Dimmitt",
+      medicare_number=="451391" ~ "Pearsall",
+      medicare_number=="451393" ~ "Crockett",
+      medicare_number=="491304" ~ "Lexington",
+      medicare_number=="501329" ~ "Sedro-Woolley",
+      medicare_number=="521330" ~ "Prairie du Chien",
+      TRUE ~ cah_city))
+```
+
+After joining the new and old data and performing any necessary transformations, this code will create data at the cah, state, and national level, and combine them for saving to a new file. 
+If we made changes to CAH data from previous quarters that we don't want to affect the state and national estimates for those quarters, those need be filtered out manually here. A redesign of some of the code could prevent having to do this manually, but I'm not sure that's worth risking potential issues/mistakes that occur during that process. Update the file path of the created data manually.
+
+```{r}
+#first create cah-level data
+edtc_cah <- edtc_final %>% 
+  mutate(
+    denom_mou= case_when(
+      provider_id %in% nomou & period==4 ~ 0, #denom is 0 when no MOU.. otherwise will still count to the 
+      provider_id %in% nomou_p3 & period==3 ~ 0, #aggregate 4 quarter denom in table
+      provider_id %in% nomou_p2 & period==2 ~ 0, #same with rates below.. columns will be #ed out
+      provider_id %in% nomou_p1 & period==1 ~ 0, #but still shows up in aggregate
+      TRUE ~ denom),
+    across(edtc1:alledtc, ~ifelse(denom_mou==0, 0, .x), .names = "{col}_mou"), #create mou versions of all measures
+    across(edtc1:alledtc, ~ ./denom, .names= "{col}_rate"), #reporting rate for each variable
+    across(edtc1_mou:alledtc_mou, ~ ./denom_mou, .names= "{col}_rate"),
+    report= ifelse(is.na(denom)==TRUE, 0, 1)) %>% #whether a CAH reported at all
+  group_by(provider_id) %>%
+  mutate(across(c(edtc1_mou:alledtc_mou, denom_mou), ~sum(., na.rm=TRUE), .names = "{col}_allq"), #total over all quarters
+         makeNA= ifelse(sum(report)==0, 1, 0)) %>% 
+  ungroup() %>%
+  mutate(across(edtc1_mou_allq:denom_mou_allq, ~ ifelse(makeNA==1, NA, .x)),
+         across(edtc1_mou_allq:alledtc_mou_allq, ~ ./denom_mou_allq, .names= "{col}_rate")) #reporting rate over all Qs
+
+#create state-level data
+edtc_state <- edtc_cah %>%
+  filter(!(provider_id %in% nomou & period==4), #CAHs w/o MOUs receive reports but that data isn't included in state/natl reports
+         !(provider_id %in% nomou_p3 & period==3),
+         !(provider_id %in% nomou_p2 & period==2),
+         !(provider_id %in% nomou_p1 & period==1)) %>% 
+#########################################################################################################################
+########## ADJUST THIS EVERY QUARTER, NEED TO REMOVE THESE NEW CAHS FROM PAST CALCULATIONS ##############################
+#########################################################################################################################
+#these are the CAHs for which we added in previous quarters of data some point.. this process can be improved
+        # !(provider_id==51337 & period < 2), #added in 2021 Q3, exclude prior data. remove once earlier data is gone (21 oct 22: I believe the data should be Q3 2021 and later now so remove this and the other q3 2021 addition, next quarter will remove the ones added 2021 Q4 - af)
+        # !(provider_id==51336 & period < 2), #added in 2021 Q3 
+        # !(provider_id==231340 & period < 3), #added in 2021 Q4
+        # !(provider_id==391317 & period < 3)) %>% #added in 2021 Q4
+#########################################################################################################################
+  mutate(across(edtc1:alledtc, ~ifelse(is.na(.x)==FALSE, 1, 0), .names= "{col}_report")) %>% #measure-level reporting
+  group_by(cah_state, period) %>%
+  summarise(across(c(denom:alledtc, report), sum, na.rm=TRUE, .names = "st_{col}"), #state-level edtc totals
+            across(edtc1_rate:alledtc_rate, ~quantile(.x, probs=0.9, na.rm=TRUE), .names= "st_p90_{col}"),
+            across(edtc1_report:alledtc_report, ~sum(.x, na.rm=TRUE))) %>% 
+  mutate(makeNA= ifelse(st_report==0, 1, 0)) %>% #if no reporting data for the entire state
+  ungroup() %>%
+  rename_with(str_remove_all, colnames(.), "_rate") %>%
+  mutate(across(st_denom:st_alledtc, ~ ifelse(makeNA==1, NA, .x)),
+         across(st_edtc1:st_alledtc, ~ ./st_denom, .names= "{col}_rate")) %>% #state reporting rate by measure
+  group_by(cah_state) %>%
+  mutate(st_denom_allq= sum(st_denom, na.rm=TRUE), #state allq data 
+         across(st_edtc1:st_alledtc, sum, na.rm=TRUE, .names= "{col}_allq"),
+         across(st_edtc1_allq:st_alledtc_allq, ~./st_denom_allq)) %>%
+  ungroup()
+
+
+#create national data for current period (others not used in report/spreadsheet)
+edtc_natl <- edtc_cah %>%
+  filter(#period==4, #only need the current quarter -- not anymore, need for figure; changed 11/24/21
+         !(provider_id %in% nomou & period==4), #added addl stuff for the new periods 11/24
+         !(provider_id %in% nomou_p3 & period==3),
+         !(provider_id %in% nomou_p2 & period==2),
+         !(provider_id %in% nomou_p1 & period==1)) %>% 
+#########################################################################################################################
+########## ADJUST THIS NEXT QUARTER, NEED TO REMOVE THESE NEW CAHS FROM PAST CALCULATIONS ###############################
+#########################################################################################################################
+        # !(provider_id==51337 & period < 2), #added in 2021 Q3
+        # !(provider_id==51336 & period < 2), #added in 2021 Q3
+         #!(provider_id==231340 & period < 3), #added in 2021 Q4
+         #!(provider_id==391317 & period < 3)) %>% #added in 2021 Q4
+#########################################################################################################################         
+  mutate(across(edtc1:alledtc, ~ifelse(is.na(.x)==FALSE, 1, 0), .names= "{col}_report")) %>%
+  group_by(period) %>%
+  summarise(across(c(denom:alledtc, report), sum, na.rm=TRUE, .names = "nt_{col}"),
+            across(edtc1_rate:alledtc_rate, ~quantile(.x, probs=0.9, na.rm=TRUE), .names= "nt_p90_{col}"),
+            across(edtc1_report:alledtc_report, ~sum(.x, na.rm=TRUE), .names = "nt_{col}")) %>% #nat rate by measure
+  ungroup() %>%
+  rename_with(str_remove_all, colnames(.), "_rate") %>%
+  mutate(across(nt_edtc1:nt_alledtc, ~ ./nt_denom, .names= "{col}_rate"))
+
+#combine the three datasets with old data and save to use next quarter
+#edtc_master_data <- edtc_cah %>% 2024-06-18: changing to main data -af 
+edtc_main_data <- edtc_cah %>%
+  inner_join(edtc_state, by=c("cah_state", "period")) %>%
+  left_join(edtc_natl, by="period") %>%
+  left_join(st_names, by="cah_state") %>%
+  select(-c(makeNA.x, makeNA.y)) %>%
+  mutate(cah_name= str_replace_all(cah_name, "&", "and"),
+         cah_name= str_replace_all(cah_name, "#", ""))
+#These characters are escaped in Latex, which causes an error when they're inserted into the figure titles
+#For now, this changes them to avoid that. There's probably way to actually fix the issue and maintain the
+#original symbols, but I haven't gotten it to work. Typically, would use "\\" before the symbol to escape it.
+#One of the backslashes will escape in Latex, the other is to escape that backslash in R.
+  
+
+
+current_q <- "2024_Q1" ## manually change 
+#dir.create(glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/EDTC/{current_q}/R/Data") , recursive = TRUE )
+
+
+#Save this file to use in next quarter's reports. set quarter above
+
+save(edtc_main_data, file = glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/EDTC/{current_q}/R/Data/edtcdata_{current_q}_{Sys.Date()}.RData"))
+
+```
+
+OPIP 
+
+
+```{r}
+opip_quarter <- "Q4 2023"
+opip_p3_q <- "Q3 2023"
+opip_p2_q <- "Q2 2023"
+opip_p1_q <- "Q1 2023"
+opip_lastQ_data <- "MBQIP Reports/Quarterly Reports/OPIP/2023_Q2/R/Data/opipdata_2023_Q2_2024-03-06.RData"
+#^ Update everything above manually each quarter ^
+## 2024-06-18: talk to Megan about if the data will always be slightly off from EDTC etc or if we are going to try to align them one day... for now the OPIP and EDTC need different period labels, so might have to update EDTC p1-p3 etc to be edtc_p1_q etc 
+
+#OP/IP measures-- any changes here will affect spreadsheet formatting
+
+#OP/IP measures-- any changes here will affect spreadsheet formatting
+rates <- c( "IMM-3", "OP-22") #have to calculate % = numerator/denominator
+medians <- c( "OP-18b") #already have median time = numerator
+hai_measure <- c("CAUTI","CDIFF","CLABSI","MRSABLD","SSICOLO","SSIHYST")
+abs <- c("leadership", "accountability", "drug_expertise", "act", "track", "report", "educate", "core_elements_met")
+ps_measures <- c("OP-18b")
+
+
+no_moulist <- list %>%
+  filter(!is.na(quarterly_measures)) %>%
+  select(provider_id, quarterly=quarterly_measures, abs= abs_q3, imm3= imm_3_q4, op22= op_22_q4) %>%
+  mutate(quarterly= str_remove(quarterly, "Start "),
+         quarterly= as.numeric(paste0(str_sub(quarterly, 4), str_sub(quarterly, 2, 3))))
+
+#CAHs with no MOU for this period --- can't use their data but need to have a report
+#QUARTERLY MEASURES (no manual changes needed)
+opip_nomou_quarterly <- no_moulist %>% #Q4 2022
+  filter(quarterly > as.numeric(paste0(str_sub(opip_quarter, 4), str_sub(opip_quarter, 2, 3)))) %>%
+  pull(provider_id)
+
+opip_nomou_p3 <- no_moulist %>% #Q3 2022
+  filter(quarterly > as.numeric(paste0(str_sub(opip_p3_q, 4), str_sub(opip_p3_q, 2, 3)))) %>%
+  pull(provider_id)
+
+opip_nomou_p2 <- no_moulist %>% #Q2 2022
+  filter(quarterly > as.numeric(paste0(str_sub(opip_p2_q, 4), str_sub(opip_p2_q, 2, 3)))) %>%
+  pull(provider_id)
+
+opip_nomou_p1 <- no_moulist %>% #Q1 2022
+  filter(quarterly > as.numeric(paste0(str_sub(opip_p1_q, 4), str_sub(opip_p1_q, 2, 3)))) %>%
+  pull(provider_id)
+
+#ANNUAL MEASURE (manual updates may be needed; refer to OPIP Report Checklist/notes below for which measures should be updated when)
+#IMM-3:UPDATE Q4 only; currently need 19-20, 20-21, 21-22 for report
+
+nomou_imm3 <- no_moulist %>% filter(imm3 > 2022) %>% pull(provider_id) #22-23
+nomou_imm3_p2 <- no_moulist %>% filter(imm3 > 2021) %>% pull(provider_id) #21-22
+nomou_imm3_p1 <- no_moulist %>% filter(imm3 > 2020) %>% pull(provider_id) #20-21
+
+#ABS: UPDATE Q3, Q4. Only update nhsn year in Q4; need 2020, 2021, 2022 for report
+nomou_nhsn <- no_moulist %>% filter(abs > 2022) %>% pull(provider_id) #2022
+nomou_nhsn_p2 <- no_moulist %>% filter(abs > 2021) %>% pull(provider_id) #2021
+nomou_nhsn_p1 <- no_moulist %>% filter(abs > 2020) %>% pull(provider_id) #2020
+
+#OP-22: UPDATE THIS Q (Q4 only); need 2019, 2020, 2021 for report
+nomou_op22 <- no_moulist %>% filter(op22 > 2022) %>% pull(provider_id) #2022
+nomou_op22_p2 <- no_moulist %>% filter(op22 > 2021) %>% pull(provider_id) #2021
+nomou_op22_p1 <- no_moulist %>% filter(op22 > 2020) %>% pull(provider_id) #2020
+
+```
+
+
+```{r}
+
+#OQR data (OP-18b)
+oqr_clin_raw <- read_csv(paste0(fmt_folder, "/Data/MBQIP Data/2023/IPOP/Q4 2023/HRSA_CAH_OQR_Clinical_2023Q4.csv")) %>%
+  clean_names() %>%
+  mutate(provider_id= as.numeric(provider_id)) %>%
+  select(provider_id,measure,numerator,denominator, population_total,
+         hsp_name, hsp_city, hsp_state)
+
+
+dupes <- oqr_clin_raw %>% 
+ #catch_dupes() 
+  get_dupes(c(provider_id , measure)) ## 2024-05-29: no dupes 
+  
+oqr_clin_dedup <- oqr_clin_raw %>% 
+  distinct() 
+
+ 
+oqr_clin <- oqr_clin_dedup
+## 12 sept 23: 3703 obs
+## 2023-11-28: 2201 obs
+## 2024-05-28: 2199
+
+
+```
+
+
+```{r annual opip measures}
+### ANNUAL MEASURES ###
+
+### OP-22 ### -- YES FOR THIS REPORT
+#only available in Q4, only need to run this code in Q4 when new data is available.
+#otherwise use previous which will be included in the old data loaded later (same for others)
+#if you run these with the wrong moulist there could be some errors
+######## make sure to uncomment the "bind op-22" below!!!!!!!! for creating the whole dataset -af 
+
+op22_raw <- read_csv(paste0(FMT2::fmt_folder, "Data/MBQIP Data/2023/IPOP/Q4 2023/HRSA_CAH_OQR_Web_Based_2023.csv")) %>%
+  clean_names() %>%
+  mutate(provider_id= as.numeric(provider_id)) %>%
+  filter(measure=="OP-22") %>%
+  select(provider_id, measure, numerator, denominator, hsp_name, hsp_city, hsp_state, date=time_period) %>%
+  catch_dupes()
+
+op22_miss <- moulist %>% 
+  full_join(op22_raw, by="provider_id") %>%
+  mutate(rate= numerator/denominator,
+         report= ifelse(is.na(denominator)==FALSE, 1, 0),
+         measure="OP-22",
+         period= 3,
+         date= as.character(max(date, na.rm=T)), #changed 5/24/22
+         type= "annual") 
+
+nrow(op22_miss) #1358
+
+
+#Check this manually; cross reference with MOU list 
+op22_miss %>% filter(is.na(medicare_number)) %>% select(provider_id, hsp_name, hsp_state) %>% view()
+
+##41332 Unity Health AR no MOU
+## 101314 no MOU
+## 151302 closed
+##181332 no MOU
+## 231317 closed
+## 321312 no MOU
+## 331322 no MOU
+## 351364 no MOU
+## 441323 no MOU
+
+op22 <- op22_miss %>% filter(is.na(medicare_number)==FALSE)
+
+nrow(op22) #1349
+
+### IMM-3 ### -- YES FOR THIS REPORT
+#only available in Q4, only need to run this code in Q4 when new data is available.
+#prior to Q4 2021, it was only updated in Q1, but we get the data earlier now
+######## make sure to uncomment the "bind imm3" below!!!!!!!! for creating the whole dataset -af 
+
+imm3_raw <- read_csv(paste0(FMT2::fmt_folder, "Data/MBQIP Data/2023/IPOP/Q4 2023/HRSA_Rural_HAI_FLUVAC_2024Q1.csv")) %>% ## 14 sept 23: make sure this is the correct spreadsheet, RURAL not CAH, for some reason they are different and the RURAL one is the one that matches the old IMM3 spreadsheet before the naming conventions changed  -af 
+  clean_names() %>%
+  filter(hcpgrp=="ALLHCP") %>%
+  mutate(provider_id= as.numeric(provider_id),
+         date= paste0(str_sub(start_date, start=-2), str_sub(end_date, start=-2))) %>% #changed 5/24/22
+  select(provider_id, num, den, hsp_name, hsp_city, hsp_state, date) %>%
+  catch_dupes() %>%
+  full_join(moulist, by="provider_id") %>%
+  mutate(report= ifelse(is.na(den)==FALSE, 1, 0),
+         numerator= num, #number of actual infection
+         denominator= den, #number of predicted infections
+         rate= numerator/denominator,
+         measure= "IMM-3",
+         type= "annual",
+         period= 3,
+         date= max(date, na.rm = T)) %>%  #changed 5/24/22
+  select(-den ,-num)
+
+nrow(imm3_raw)
+##2024-05-28: 1697
+
+missing <-  imm3_raw %>% filter(is.na(medicare_number)) %>% select(provider_id, hsp_name, hsp_state) %>% view() #363 missing obs, assuming they're all non-MOU cahs
+
+imm3 <- imm3_raw %>% filter(is.na(medicare_number)==FALSE)
+nrow(imm3)
+
+#1349, matches MOU list 
+
+```
+
+ABS measures (OPIP) 
+
+ABS for Q3 and Q4
+
+!!! 2024-05-15: double check the CAH 291304 with ABS data, Megan updated the spreadsheet so it should be fine going forward but I may have to manually change the previous quarters. There's already code below that will make that change but need to make sure it's changing Q3.
+```{r}
+### Antibiotic Stewardship ### -- YES FOR THIS REPORT
+#new data available in Q3 and Q4, only need to run when new data is available
+#Q3 data will be an update to the previous year's data (overwrite that) and Q4 will be a new year of data
+
+nhsn_raw <- readxl::read_xls(
+  paste0(FMT2::fmt_folder, "Data/MBQIP Data/2023/IPOP/Antibiotic Stewardship/Data for Q4 reports/CAH_ASP_2023Q4_05_28_2024.xls"),
+  sheet = "ASP_2023Q4_internal") %>%
+  clean_names() %>%
+  mutate(provider_id= as.numeric(ccn),
+         mark=1,
+         across(leadership:educate, ~ifelse(.x=="Y", 1, 0))) |>  
+
+#manually update what should be filtered out based on whatever dupes exist. Comment out filter at first 
+  filter(!(provider_id==331321 & org_id==11050) ,
+         !(provider_id==671300 & org_id==18921) )  #remove duplicate- there are usually 1 or 2
+
+
+
+dupes <- nhsn_raw %>% get_dupes(provider_id) ## nhsn dupes are hard to catch, I try multiple ways -af 
+
+nhsn_raw %>%  group_by_all() %>%
+  filter(n()>1) %>%
+  ungroup() ## this is just a second way to checking for dupes
+
+
+update_nhsn_raw <- nhsn_raw %>% filter(provider_id == 291304 )
+
+update_nhsn_raw %>% filter(provider_id == 291304 ) %>%  view() ## 24 jan 23: data for this NV CAH needs to be changed per quarterly changes doc -af
+## 2024-03-06: not sure but think we can skip this for the 2022 data? -af 
+
+nhsn_raw <- nhsn_raw %>% 
+  mutate(act = case_when(provider_id==291304 ~ 1 , TRUE ~ act ) ,
+         core_elements_met = case_when(provider_id==291304 ~ 7 , TRUE ~ core_elements_met ) )
+
+#In 2019, we had an issue where some CAHs in the partial data (Q4 previous year) were dropped from the complete data (Q3 the next year)
+#The code below should be run in Q3 (when updating data, not adding a new year) to read in that year's partial data and check it against the new, complete data
+#Let Megan know about any CAHs that have this issue and revert the data for any CAHs that are unexpectedly missing from the final file
+
+############## 
+####FOR Q3####
+##############
+
+#read in partial data (the file used in the previous Q2 report)
+nhsn_partial <- readxl::read_xls(
+  paste0(FMT2::fmt_folder, "Data/MBQIP Data/2022/Antibiotic Stewardship/CAH_ASP_2022Q4_05_23_2023.xls"),
+  sheet = "ASP_2022Q4_internal") %>%
+  clean_names() %>%
+  mutate(provider_id= as.numeric(ccn),
+         mark=1,
+         across(leadership:educate, ~ifelse(.x=="Y", 1, 0))) %>% 
+ filter(!(provider_id==131323 & org_id==46088)) %>% #remove duplicate (manual changes needed)
+  catch_dupes()
+
+dupes <- nhsn_partial %>% get_dupes()
+
+abs_missing <- nhsn_partial %>%
+  filter(provider_id %ni% nhsn_raw$provider_id) 
+
+length(unique(abs_missing$provider_id)) #5 
+abs_missing$provider_id %in% moulist$provider_id
+#FALSE FALSE FALSE FALSE FALSE
+abs_missing$provider_id
+#not in list: 231317 151302 451360 171340 191303 (closed, closed, closed, closed , closed)
+
+
+
+abs_add <- abs_missing %>% filter(provider_id %in% moulist$provider_id)
+
+##########add the partial data back into the complete data 
+
+###############(uncomment in Q3 to run)######################
+
+#nhsn_raw <- nhsn_raw %>% rbind(abs_add) #- this change would only happen in the Q3 reports
+## 2024-03-06: 1293 obs
+
+#now resume data creation process
+nhsn_mou <- nhsn_raw %>%
+  full_join(moulist, by= "provider_id") %>% 
+  pivot_longer(cols= c(leadership:core_elements_met), names_to= "measure", values_to= "abs_met") %>%
+  mutate(report= ifelse(is.na(mark)==FALSE, 1, 0),
+         type="annual",
+         period= 3, ##changed from 2 on 2/28/2022 
+         date= as.character(max(survey_year, na.rm=T))) %>% #changed 5/24/22
+  select(-c(ccn:survey_year, mark))
+
+
+
+nrow(nhsn_mou) ## 10792
+
+nhsn_mou %>% filter(is.na(medicare_number)) %>% view() #40 missing but they're all closed CAHs
+nhsn <- nhsn_mou %>% filter(is.na(medicare_number)==FALSE)
+
+nrow(nhsn) 
+## 2023-11-29: 10744/8 = 1343 
+## 2024-03-06: 10784
+## 2024-06-04: 10792
+
+### combine data into a single file for use ###
+#only join new annual files, otherwise comment those lines out
+########### remember to uncomment for Q4!!!! -af 
+opip_new <- medtime %>%
+  bind_rows(rate) %>%
+  mutate(period=4, date= paste0(str_sub(quarter, -4), str_sub(quarter, end= 2))) %>%
+  bind_rows(op22) %>% 
+  bind_rows(imm3) %>% 
+  select(-c(hsp_name:hsp_state))  %>% 
+  bind_rows(nhsn) 
+
+
+nrow(opip_new)  
+## 2024-03-06: 21552
+## 2024-06-04: 16188
+
+```
+
+OPIP previous quarters :
+The next code chunk reads in the previous quarter's data to combine with the new data. The reports require the most recent year of quarterly data and most recent 3 periods of annual data, so they will use the data that was just created and the data from previous applicable periods. The most recent quarterly data is referred to as "Period 4", the next most recent as "Period 3", and so on, no matter which quarter the data actually comes from. Annual data is treated the same, except the maximum period is 3. Barring any notes to the contrary within the code, no code should need to be updated manually. Typically, any manual changes indicated by the notes involve the addition of data for past quarters for newly added CAHs. Usually the creation of that is done in a separate file (see folder when relevant) but it could be tacked on somewhere here as well.
+
+```{r}
+#load data from previous report
+load(paste0(fmt_folder, lastQ_data))
+
+##2024-05-28: looks like the data was just labeled incorrectly so i renamed it and saved it in Q3 for future 
+
+
+#adjust periods & drop old data when necessary
+#abs is a little more complex because we will replace a year of data with updated data for the same year in Q3
+previous_qs <- opip_master_data %>% 
+  select(provider_id:abs_met) %>% 
+  mutate(period= as.numeric(period),
+         period= ifelse(type=="quarterly", period-1, period)) %>% #move period back 1 for all quarterly data
+  filter(period != 0) %>%
+#this takes values from quarter, defined above i.e. Q4 2020
+#made a lot of changes to this 5/24/22 to reflect that IMM-3 is now updated in Q4
+#if Q3,  drop ABS period 2. 
+## if Q4, drop OP-22, ABS, IMM-3 period 1
+  filter(                           
+    case_when(
+      str_sub(quarter, 2, 2)==4 ~ !((measure=="IMM-3"|measure %in% abs|measure=="OP-22") & period==1), #drop oldest IMM-3 period in Q4
+      str_sub(quarter, 2, 2)==3 ~ !(measure %in% abs & period==3), #new data updates period 3, drop that, updated 2/28/22
+      TRUE ~ is.na(provider_id)==FALSE)) %>%
+#if quarter/measure above, move back annual data period by 1. no action for ABS in Q3
+  mutate(period= case_when(
+    str_sub(quarter, 2, 2)==4 ~ ifelse((measure %in% abs|measure=="OP-22"|measure=="IMM-3") & period==2, 1, period),
+   TRUE ~ period))  %>% ## 20 march 23: trying to figure out if this is why the ABS data is wrong -af
+  mutate(period= case_when(
+   str_sub(quarter, 2, 2)==4 ~ ifelse((measure=="IMM-3"|measure %in% abs|measure=="OP-22") & period==3, 2, period),
+    TRUE ~ period)) #%>%
+#############################################################################  
+### ADD NEW DATA FOR PAST PERIODS HERE --- REMOVE CODE FOR FUTURE REPORTS ###
+#############################################################################
+ # filter(!(measure=="OP-22" & period==3)) %>% #remove existing 2020 data (new version added in new data) %>%
+  #bind_rows(newcahdata) #add new rows of quarterly data just for new CAH
+
+opip_combined <- opip_new %>% 
+  bind_rows(previous_qs) %>%
+  filter(!(provider_id %in% closed)) %>% #remove old data for newly closed CAHs
+  mutate(cah_name= str_trim(cah_name)) #remove extra spaces
+
+opip_combined %>% count(measure, period, date) %>% view() #check to make sure everything looks good
+
+opip_new %>% count(measure, period, date) %>% view()  ## 1349, double check to see if the ABS measures are different because they sometimes have sneaky duplicates -af 
+
+
+#Change measure values/reporting to NA for CAHs w/o MOUs
+#Still want to include under a # or N for CAH reports/sheets, but don't want to affect state/nat calcs
+ps_measures <- c("OP-2", "OP-3b", "OP-18b")
+
+opip_cah <- opip_combined %>%
+  mutate(across(c(numerator:report, rate, sir:abs_met), ~ifelse(type=="quarterly" & provider_id %in% nomou_quarterly, NA, .x)),
+         across(c(numerator:report, rate, sir:abs_met), ~ifelse(measure %in% toupper(abs) & provider_id %in% nomou_nhsn,
+                                                                NA, .x)),
+         across(c(numerator:report, rate, sir:abs_met), ~ifelse(measure=="IMM-3" & provider_id %in% nomou_imm3, NA, .x)),
+         across(c(numerator:report, rate, sir:abs_met), ~ifelse(measure=="OP-22" & provider_id %in% nomou_op22, NA, .x)),
+         abs_met_binary= case_when(
+           measure== "core_elements_met" & abs_met != 7 ~ 0,
+           measure== "core_elements_met" & abs_met == 7 ~ 1,
+           TRUE ~ abs_met),
+         ps_flag= ifelse(is.na(ps_flag), 0, ps_flag))
+
+
+
+nrow(opip_cah) 
+## 2023-11-20: 80202
+## 2023-11-30: 88179
+##2024-03-06: 87029
+## 2024-06-04: 77686
+```
+
+
+Now that the CAH data includes all periods for all measures, the next code chunk will create state and national estimates for that data. This chunk will format all data (the new data plus that from previous periods). I initially did it this way (removing the formatting from the old data and doing it again) because I wanted to be able to make changes to state/national totals if things changed in the data for past quarters between reports. However, in practice it turns out we usually don't want to change that info when we had data from the past in. So, this and previous code chunks could be redesigned to reflect that, by formatting the new data and then joining it with the still-formatted, old data. I haven't had the time/motivation to do so, but that's definitely an option.
+
+As a result, any CAHs that shouldn't be included in the calculations (such as any new data for past periods) needs to be removed when 'opip_trim` is created at the beginning of the chunk. Only one thing will need to be updated manually besides that-- the new file path and name for the created data. Towards the end of this chunk, the code also creates a list of CAHs that have missing data for a measure in at least one period. I've found that most errors happen either with these CAHs or those that lack MOUs for some periods, so I try to manually check those reports when completed.
+
+```{r}
+#Remove CAHs without MOUs for calculating state and national aggregate values (and remove ps_flag==1 for some measures)
+opip_trim <- opip_cah %>%
+  filter(!(type=="quarterly" & period==4 & provider_id %in% nomou_quarterly), #remove CAHs w/o MOUs
+         !(type=="quarterly" & period==3 & provider_id %in% nomou_p3),
+         !(type=="quarterly" & period==2 & provider_id %in% nomou_p2),
+         !(type=="quarterly" & period==1 & provider_id %in% nomou_p1),
+         !(measure=="IMM-3" & period==3 & provider_id %in% nomou_imm3),
+         !(measure=="IMM-3" & period==2 & provider_id %in% nomou_imm3_p2),
+         !(measure=="IMM-3" & period==1 & provider_id %in% nomou_imm3_p1),
+         !(measure=="OP-22" & period==3 & provider_id %in% nomou_op22),
+         !(measure=="OP-22" & period==2 & provider_id %in% nomou_op22_p2),
+         !(measure=="OP-22" & period==1 & provider_id %in% nomou_op22_p1),
+         !(measure %in% abs & period==3 & provider_id %in% nomou_nhsn),
+         !(measure %in% abs & period==2 & provider_id %in% nomou_nhsn_p2), 
+         !(measure %in% abs & period==1 & provider_id %in% nomou_nhsn_p1)#,
+       #  !(provider_id==391317 & type=="quarterly" & period < 3)
+         ) #will need to keep this, but adjust for future reports
+#This was a CAH added in the Q3 2021 report. It needed data for past quarters, but we didn't want that data
+#to affect the state and national estimates. So it must be removed here. Look back to that report for more info. 
+#Only quarterly measures were added, so any measures prior to Q3 2021 (now period #3) need to be dropped.
+#This code will need to be adjusted until that data is no longer in the four most recent periods, then remove.
+
+#State calculations
+opip_st_perc <- opip_trim %>%
+  filter(measure %ni% abs,
+         measure %ni% hai_measure,
+         ps_flag != 1) %>% 
+#^ need to exclude these cases for percentiles/medians, because it wil affect them, but not for other calculations
+  group_by(cah_state, measure, period) %>%
+  summarise(
+    st_num_median= median(numerator, na.rm = TRUE),
+    st_median= median(count, na.rm = TRUE),
+    st_p90_rate= quantile(rate, probs = 0.9, type=2, na.rm = TRUE),
+    st_p90_median= quantile(numerator, probs = 0.1, type=2, na.rm = TRUE),
+    st_p90_op22= quantile(rate, probs = 0.1, type=2, na.rm = TRUE)) %>%
+  mutate(
+    st_p90= case_when(
+      measure == "OP-2" | measure == "IMM-3" ~ st_p90_rate,
+      measure %in% medians ~ st_p90_median,
+      measure=="OP-22" ~ st_p90_op22,
+      TRUE ~ 0))
+
+opip_st <- opip_trim %>%
+  group_by(cah_state, measure, period) %>%
+  summarise(
+    st_num_rate= sum(numerator, na.rm = TRUE),
+    st_denom= sum(denominator, na.rm = TRUE),
+    st_report= sum(report, na.rm = TRUE),
+    st_count= sum(count, na.rm = TRUE),
+    st_est= sum(est, na.rm = TRUE),
+    st_abs_rate= mean(abs_met_binary, na.rm=TRUE)) %>%
+  ungroup() %>%
+  left_join(opip_st_perc, by= c("cah_state", "measure", "period")) %>%
+  mutate(
+    st_sir= ifelse(st_report > 0, st_count/st_est, NA),
+    st_num= case_when(
+      measure %in% rates ~ st_num_rate,
+      measure %in% medians  ~ st_num_median, 
+      TRUE ~ 0),
+    st_rate= ifelse(st_report > 0, st_num/st_denom, NA),
+    st_ps_flag= ifelse(measure %in% ps_measures & st_report > 0 & st_denom==0, 1, 0)) %>% #these receive an *
+  #there's an asterisk when there's a 0 denom for an entire state, but at least one CAH reporting
+  select(-c(st_num_rate, st_num_median, st_p90_rate, st_p90_median, st_p90_op22))
+
+
+#National Calculations
+opip_nat_perc <- opip_trim %>%
+   filter(measure %ni% abs,
+         measure %ni% hai_measure,
+         ps_flag != 1) %>%
+  group_by(measure, period) %>%
+  summarise(
+    nat_num_median= median(numerator, na.rm = TRUE),
+    nat_median= median(count, na.rm = TRUE),
+    nat_p90_rate= quantile(rate, probs = 0.9, type=2, na.rm = TRUE),
+    nat_p90_median= quantile(numerator, probs = 0.1, type=2, na.rm = TRUE),
+    nat_p90_op22= quantile(rate, probs = 0.1, type=2, na.rm = TRUE)) %>%
+  mutate(
+    nat_p90= case_when(
+      measure == "OP-2" | measure == "IMM-3" ~ nat_p90_rate,
+      measure %in% medians ~ nat_p90_median,
+      measure=="OP-22" ~ nat_p90_op22,
+      TRUE ~ 0))
+  
+opip_nat <- opip_trim %>%
+  group_by(measure, period) %>%
+  summarise(
+    nat_num_rate= sum(numerator, na.rm = TRUE),
+    nat_denom= sum(denominator, na.rm = TRUE),
+    nat_report= sum(report, na.rm = TRUE),
+    nat_count= sum(count, na.rm = TRUE),
+    nat_est= sum(est, na.rm = TRUE),
+    nat_abs_rate= mean(abs_met_binary, na.rm=TRUE)) %>%
+  ungroup() %>%
+  left_join(opip_nat_perc, by= c("measure", "period")) %>%
+  mutate(
+    nat_sir= ifelse(nat_report > 0, nat_count/nat_est, NA),
+    nat_num= case_when(
+      measure %in% rates ~ nat_num_rate,
+      measure %in% medians  ~ nat_num_median, 
+      TRUE ~ 0),
+    nat_rate= ifelse(nat_report > 0, nat_num/nat_denom, NA),
+    nat= 1) %>%
+  select(-c(nat_num_rate, nat_num_median, nat_p90_rate, nat_p90_median, nat_p90_op22))
+
+#now join these to cah-level data
+st_names <- tibble(cah_state=state.abb, state_name=state.name)
+
+opip_master_data <- opip_cah %>% #no easy way to join by period here, not a real problem, will go to all rows
+  full_join(opip_st, by=c("cah_state", "measure", "period")) %>%
+  full_join(opip_nat, by= c("measure", "period")) %>%
+  left_join(st_names, by="cah_state") %>% 
+#These characters are escaped in Latex, which causes an error when they're inserted into the figure titles
+#For now, this changes them to avoid that. There's probably way to actually fix the issue and maintain the
+#original symbols, but I haven't gotten it to work. Typically, would use "\\" before the symbol to escape it.
+#One of the backslashes will escape in Latex, the other is to escape that backslash in R.
+  mutate(cah_name= str_replace_all(cah_name, "&", "and"),
+         cah_name= str_replace_all(cah_name, "#", ""),
+         #one time change-- even without this, should still print okay
+         cah_city= case_when(
+           medicare_number=="041314" ~ "DeWitt", #made quite a few recent updates. 
+           medicare_number=="111337" ~ "Elberton", 
+           medicare_number=="121302" ~ "Kapaau",
+           medicare_number=="141331" ~"Du Quoin",
+           medicare_number=="161358" ~ "Corydon",
+           medicare_number=="171343" ~ "Johnson City",
+           medicare_number=="171355" ~ "WaKeeney",
+           medicare_number=="171377" ~ "Smith Center",
+           medicare_number=="181325" ~ "Greensburg",
+           medicare_number=="191303" ~ "Napoleonville",
+           medicare_number=="191314" ~ "Tallulah",
+           medicare_number=="231307" ~ "L'Anse",
+           medicare_number=="251327" ~ "Hazlehurst",
+           medicare_number=="261302" ~ "Fredericktown",
+           medicare_number=="261330" ~ "Ste. Genevieve",
+           medicare_number=="281329" ~ "O'Neill",
+           medicare_number=="361331" ~ "Washington Court House",
+           medicare_number=="391309" ~ "Susquehanna Depot",
+           medicare_number=="431332" ~ "De Smet",
+           medicare_number=="441305" ~ "Lafayette",
+           medicare_number=="451350" ~ "Dimmitt",
+           medicare_number=="451391" ~ "Pearsall",
+           medicare_number=="451393" ~ "Crockett",
+           medicare_number=="491304" ~ "Lexington",
+           medicare_number=="501329" ~ "Sedro-Woolley",
+           medicare_number=="521330" ~ "Prairie du Chien",
+           TRUE ~ cah_city))
+
+#The code below will pull out any CAHs that have missing data for at least one period, which
+#occurs when new CAHs begin reporting and they don't have data for past periods. If there are errors,
+#they're frequently these ones. It may be a good idea to check these reports once printed, along with
+#those that lack an MOU, to make sure they look correct.
+miss_data <- tibble()
+for (m in unique(opip_master_data$measure)) {
+  temp <- opip_master_data %>% 
+    filter(measure==m)
+  
+  if(temp[1,]$type=="quarterly"){
+    join <- temp %>%
+      group_by(provider_id) %>%
+      mutate(total= sum(period)) %>% 
+      ungroup() %>% 
+      filter(total != 10)
+    
+    miss_data <- bind_rows(miss_data, join)
+  }
+  
+  else if(temp[1,]$type=="annual"){
+    join <- temp %>%
+      group_by(provider_id) %>%
+      mutate(total= sum(period)) %>% 
+      ungroup() %>% 
+      filter(total != 6,
+             measure %ni% abs)
+    
+    miss_data <- bind_rows(miss_data, join)
+  }
+}
+
+missing_cahs <- miss_data %>% select(provider_id, cah_name, cah_state, measure, period) %>% distinct() %>% arrange(provider_id)
+
+#SAVE THE DATA FILE HERE -- change the location and name
+## have to create the data folder first ###
+
+##################### 
+###UPDATE MANUALLY###
+#####################
+current_q <- "2023_Q4"
+
+
+dir.create(glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/OPIP/{current_q}/R/Data" , recursive = TRUE))
+
+save(opip_master_data, file = glue::glue("{fmt_folder}/MBQIP Reports/Quarterly Reports/OPIP/{current_q}/R/Data/opipdata_{current_q}_{Sys.Date()}.RData"))
+
+
+```
+
+state assessment data 
+
+
+
+import assessment data 
+```{r}
+#Manually update
+repyr <- 2023 
+
+assessment_data_raw <- readxl::read_xlsx(here("data/State_Report_Spreadsheet_Data_05.xlsx")) |>  ## 2024-01-18: updated to new data spreadsheet from bobby via email on 2024-01-17, renamed the file on local drive -af 
+  #2024-01-19: updated to new data spreadsheet from bobby via email on 2024-01-19, renamed the file on local drive -af 
+  clean_names() |>  
+  rename(total_cahs = mou_ca_hs ,
+         state_abbr = cah_state ) |> 
+  mutate(#state_abbr = ifelse(state_abbr == "Z-" , "US" , state_abbr), ## 2024-01-19: US is missing and says "Z-" instead? email Bobby later -af 
+    ##2024-02-02: fixed with the 5th version of the spreadsheet -af
+         state = state.name[match(state_abbr , state.abb)] ,
+         state = ifelse( state_abbr == "US", "National" , state ) ,
+         nat_nreport = reporting[state_abbr == "US"]) |> 
+  relocate(state , .after = state_abbr)
+
+
+
+variable_labels <- readxl::read_xlsx(here("data/variable_labels_03.xlsx")  ) |> 
+  clean_names() ## 2024-01-12: updated to version 03 with added parentheticals around grouping variables -af 
+
+variable_labels <- variable_labels[!apply(is.na(variable_labels) , 1, all),] ## 2023-11-16: deletes the blank rows to leave just the names and descriptions
+  
+variable_labels <- variable_labels |> mutate(variable_name = tolower(variable))  |> ## 2023-12-14: lowercase the variables for joining to other variables later -af 
+  select(-variable)
+
+
+## 2024-01-17: using Bobby's lists for consistency, copied them from the server to the project data folder so if he updates them I will have to re-copy them over -af 
+
+total_cah_list <- haven::read_sas(here("data/cah_list.sas7bdat")) |> 
+  clean_names() |> 
+  filter(pps_converting == "No")  ##
+
+moulist <-  haven::read_sas(here("data/cah_list.sas7bdat")) |> 
+  clean_names() |> 
+  filter(has_mou == "Yes") ## 1345
+
+## 2024-01-17: looking at bobby's SAS data, i think this is easier to use than the cahlist above -af 
+
+assessment_final <-  haven::read_sas(here("data/assessment_final.sas7bdat")) |> 
+  clean_names() 
+
+moulist_sas <-  assessment_final |> 
+  filter(mou == 1) |> 
+  select(ccn ,  cah_state ) |> 
+   rename(provider_id = ccn ,
+         state_abbr = cah_state) |> 
+  group_by(state_abbr) |> 
+  summarise(state_mou_cahs = n()) |> 
+  add_row(state_abbr = "US") |> 
+  ungroup() |> 
+  mutate(nat_nmou = sum(state_mou_cahs , na.rm = TRUE) ) |> 
+  mutate(state_mou_cahs = case_when(state_abbr == "US" ~ nat_nmou ,
+                                      TRUE ~ state_mou_cahs))
+  
+
+total_cah_list_sas <- assessment_final |> 
+  filter(pps == 2) |> 
+  select(ccn , cah_state ) |> 
+  rename(provider_id = ccn ,
+         state_abbr = cah_state) |> 
+  group_by(state_abbr) |> 
+  summarise(state_total_cahs = n() ) |> 
+  add_row(state_abbr = "US") |> 
+  ungroup() |> 
+  mutate(nat_ncah = sum(state_total_cahs , na.rm = TRUE) ) |> 
+  mutate(state_total_cahs = case_when(state_abbr == "US" ~ nat_ncah ,
+                                      TRUE ~ state_total_cahs))
+
+
+full_data <-  assessment_data_raw |> 
+  left_join(moulist_sas , by = "state_abbr" ) |> 
+  left_join(total_cah_list_sas , by = "state_abbr")
+
+
+## 2024-01-31: added this to fix the text comparisons for the reports -af 
+full_data <- full_data |> 
+  mutate(comp_crit = case_when(comp_crit == "higher" ~ "higher than" ,
+                               comp_crit == "lower" ~ "lower than" ,
+                               TRUE ~ comp_crit) ,
+         comp_elem = case_when(comp_elem == "higher" ~ "higher than" ,
+                               comp_elem == "lower" ~ "lower than" ,
+                               TRUE ~ comp_elem ) )
+  
+```
