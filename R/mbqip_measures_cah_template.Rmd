@@ -38,6 +38,7 @@ knitr::opts_chunk$set(echo = FALSE)
 periods <- c(4, 3, 2, 1)
 max_per <- max(cah$period, na.rm=TRUE)
 
+### EDTC CODE###
 #if a CAH does not have 4 quarters of data the table code will cause an error
 #so need to add data with NA for those quarters, but don't want this affect the st/nat calcs
 #so adding these extra empty periods here
@@ -51,13 +52,13 @@ for (per in periods){
         st_nt <- state_data %>% #get state and natl data
           filter(period==4) %>%
           slice(1) %>%
-          select(period, st_denom:state_name)
+          select(period, edtc_st_denom:nt_alledtc_rate , state_name) ##adding edtc_st_denom 
         
         st_agg <- cah %>% #get state 4Q aggregate 
           filter(period== max_per) %>%
           select(provider_id:alledtc_mou_allq_rate) %>%
           mutate(period=4) %>%
-          mutate(across(c(denom:alledtc, quarter:report), ~NA)) %>%
+          mutate(across(c(denom:alledtc, quarter:edtc_report), ~NA)) %>% ## 2024-06-26: updated here with edtc_report
           inner_join(st_nt, by="period")
         
         cah <- cah %>% rbind(st_agg)
@@ -69,6 +70,7 @@ for (per in periods){
       }
    }
 }
+
 
 #table code
 for (per in periods){
@@ -82,7 +84,7 @@ for (per in periods){
   
   if ("measure_4" %in% colnames(edtc_temp)) {
     
-    assign("denom_st", cah %>% filter(period==4) %>% select(st_denom))
+    assign("denom_st", cah %>% filter(period==4) %>% select(edtc_st_denom))
     assign("denom_nt", cah %>% filter(period==4) %>% select(nt_denom))
     
     #cah all quarters
@@ -182,7 +184,7 @@ table_data <- cbind(c("EDTC-All"," "," "," "," "," "," "," "," ",  " "),
                "# CAHs Reporting","Average Current Quarter","90th Percentile",
                "# CAHs Reporting","Average Current Quarter","Average Current Quarter")) #edited 11/24
 
-table <- kable(table_data, format = "latex", booktabs = TRUE, linesep="") %>%
+edtc_table <- kable(table_data, format = "latex", booktabs = TRUE, linesep="") %>%
   kable_styling(latex_options = c("striped","scale_down", "HOLD_position"), stripe_index = c(1,3,5,7,9),
                 position = "center",
                 font_size = 11, stripe_color = "#ddf1f7") %>%
@@ -196,3 +198,314 @@ table <- kable(table_data, format = "latex", booktabs = TRUE, linesep="") %>%
   row_spec(10, color = "#14416d") 
 
 ```
+
+```{r make opip tables , echo=FALSE, results="hide", message=FALSE, warning=FALSE, include=TRUE}
+
+
+###OPIP CODE SETUP### 
+#(copied from old code )if a cAH doesn't have all quarters of data it will throw an error, so need to add NA rows in those cases.
+#this is stupid but not sure there's a better way
+#made a lot of changes (mainly commenting this out which fixed issues with this and make it shorter)
+#it seems like a lot of this was just unnecessarily complicated
+rates <- c("IMM-3", "OP-22") #have to calculate % = numerator/denominator
+medians <- ("OP-18b") #already have median time = numerator
+hai_measure <- c("CAUTI","CDIFF","CLABSI","MRSABLD","SSICOLO","SSIHYST")
+abs <- c("leadership", "accountability", "drug_expertise", "act", "track", "report", "educate", "core_elements_met")
+ps_measures <- c( "OP-18b")
+
+quarterly_periods <- c(4, 2, 3, 1)
+for (per in quarterly_periods){
+  
+  for (m in c(medians)){
+    cah_temp <- cah %>% filter(measure==m)
+    #technically there could be 0 obs for any Q? address if that comes up
+    if (!(per %in% cah_temp$period)){
+      
+        st_nt <- state_data %>% #get state and natl data
+            filter(period==per, #changed ==4 to ==per, 11/23/21
+                   measure==m) %>%
+            slice(1) %>%
+            select(measure, cah_state, period, opip_st_denom:state_name) %>% #added cah_state 1/26/21
+          ## 2024-06-26: added opip_st_denom instead of st_denom 
+          mutate(provider_id= as.numeric(i)) #added 11/23/21
+        
+        cah <- cah %>% bind_rows(st_nt)
+    }
+  }
+}
+
+annual_periods <- c(3, 2, 1)
+for (per in annual_periods){
+  
+  for (m in c("IMM-3", "OP-22", abs)){
+    cah_temp <- cah %>% filter(measure==m)
+
+    if (!(per %in% cah_temp$period)){
+      
+      
+        st_nt <- state_data %>% #get state and natl data
+            filter(period==per, #for now nothing will be added for ABS p3; changed ==3 to ==per, 11/23/21
+                   measure==m) %>%
+            slice(3) %>%
+            select(provider_id, cah_state, measure, period, opip_st_denom:state_name) %>% #added cah_state here 1/26/21
+          mutate(provider_id= as.numeric(i)) #added 11/23/21
+        
+        cah <- cah %>% bind_rows(st_nt)
+    }
+  }
+}
+#####################################################
+
+### add benchmarks ###
+cah <- cah %>%
+  inner_join(bms, by="measure")
+
+### QUARTERLY MEASURES (2 Tables) ###
+ami_right <- cah %>%
+  filter(measure=="OP-18b",
+         period==4) %>%
+  mutate(st_num= ifelse(st_ps_flag==1, "N/A", as.numeric(st_num)),
+         st_p90= ifelse(st_ps_flag==1, "N/A", st_p90) ,
+         st_num = rndup1(st_num , 0)) %>%  ##2023-12-5: removed these to see if it fixes the 999 showing up in the CAH pdf -af 
+  ## 2023-12-06: it did not, replacing the 999s with NAs
+  ## 2023-12-12: updating to try rounding the state numbers 
+  select(measure, opip_st_report, st_num, st_p90, nat_report, nat_num, benchmark) #changed nat p90 to ben 11/19
+
+ami <- cah %>%
+  filter(measure=="OP-18b") %>%
+  mutate(numerator= ifelse(ps_flag==1, "N/A", numerator)) %>% ##2023-12-5: removed these to see if it fixes the 999 showing up in the CAH pdf -af 
+  select(provider_id, measure, period, numerator) %>%
+  pivot_wider(names_from = period, names_glue= "{.value}_{period}", values_from= numerator) %>%
+  inner_join(ami_right, by= "measure") %>%
+  mutate(across(matches("numerator|p90|st_num"), ~ifelse((.x=="NA min"|.x=="NA%" |is.na(.x)), "N/A", .x)), #all missing are treated as N/A (+ each q)
+         st_report= as.character(prettyNum(st_report, big.mark = ",")),
+         nat_report= as.character(prettyNum(nat_report, big.mark = ","))) |> 
+  mutate(across(everything(), as.character)) 
+
+ami_denoms <- cah %>%
+  filter(measure=="OP-18b") %>%
+  select(provider_id, measure, period, ps_flag, denominator) %>% 
+  pivot_wider(names_from = period, names_glue= "{.value}_{period}", values_from= c(denominator, ps_flag)) %>% #changed 10/4/21
+  mutate(across(contains("denom"), ~ifelse(is.na(.x)|.x==0, "N/A", paste0("N=", prettyNum(.x, big.mark = ",")))) #,
+         # denominator_4= ifelse(ps_flag_4==1, "*", denominator_4), #added these 10/4
+         # denominator_3= ifelse(ps_flag_3==1, "*", denominator_3),
+         # denominator_2= ifelse(ps_flag_2==1, "*", denominator_2),
+         # denominator_1= ifelse(ps_flag_1==1, "*", denominator_1)
+         ) %>%
+  select(-contains("ps_flag")) |> 
+  cbind("", "", "", "", "", "") %>% 
+  set_colnames(colnames(ami))  |> 
+   mutate(across(everything(), as.character)) 
+  # mutate(st_num = as.character(st_num) ,
+  #        st_p90 = as.character(st_p90) ,
+  #        nat_num = as.character(nat_num) ,
+  #        benchmark = as.character(benchmark)) 
+
+
+
+#Table 2
+table2_data <- ami %>%
+  filter(measure == "OP-18b") %>% 
+  bind_rows(ami_denoms %>%
+              filter(measure == "OP-18b")) %>%
+  arrange(desc(st_report)) %>% 
+  mutate(measure= ifelse(st_report=="", "", measure)) %>%
+  cbind(text= c("Median Time from ED Arrival to ED Departure for Discharged ED Patients","Number of Patients (N)")) %>%
+  mutate(numerator_1= ifelse(provider_id %in% nomou_p1, "#", numerator_1),
+         numerator_2= ifelse(provider_id %in% nomou_p2, "#", numerator_2),
+         numerator_3= ifelse(provider_id %in% nomou_p3, "#", numerator_3),
+         numerator_4= ifelse(provider_id %in% nomou_quarterly, "#", numerator_4)) %>%
+  select(measure, text, numerator_1, numerator_2, numerator_3, numerator_4, st_report:benchmark) %>% #edited 11/19
+  set_colnames(c(" ", "Emergency Department – Quarterly Measure", p1_q, p2_q, p3_q, p4_q, "# CAHs Reporting",
+                 "Median Time", "90th Percentile", "# CAHs Reporting", "Median Time", "Median Time")) #edited 11/19
+
+table2 <- kable(table2_data, format = "latex", booktabs = TRUE, linesep="", align = c("l", "l", rep("c", 10))) %>%
+  kable_styling(latex_options = c("basic","scale_down","HOLD_position"), position = "center", font_size = 11) %>%
+  add_header_above(c(" "=2, "Your Hospital's Performance by Quarter"=4, "State Current Quarter"=3, 
+                     "National \nCurrent Quarter"=2, "Bench-\nmark"=1), color = "#000000", bold = TRUE) %>% #edited 11/19
+  column_spec(1, width = "2cm") %>%
+  column_spec(2, width = "7cm") %>%
+  column_spec(3:12, width = "1.7cm") %>%
+  row_spec(c(1), background = "#ddf1f7")
+
+### ANNUAL MEASURES (2 Tables)
+annual_right <- cah %>% 
+  filter(measure=="OP-22"|measure=="IMM-3",
+         period==3) %>%
+  select(measure, st_report, st_rate, st_p90, nat_report, nat_rate, benchmark) #added benchmark 11/19
+
+annual <- cah %>%
+  filter(measure=="OP-22"|measure=="IMM-3") %>%
+  select(provider_id, measure, period, rate) %>%
+  pivot_wider(names_from = period, names_glue= "{.value}_{period}", values_from= rate) %>%
+  inner_join(annual_right, by= "measure") %>%
+  mutate(across(matches("rate|p90"), ~ifelse(is.na(.x), "N/A",  rndup(.x))),
+         across(contains("report"), ~ifelse(is.na(.x), "N/A", as.character(prettyNum(.x, big.mark = ",")))),
+         benchmark= sprintf("%1.0f%%", as.numeric(benchmark))) #new 11/19
+#will deal with no mous further down
+
+annual_denoms <- cah %>%
+  filter(measure=="OP-22") %>%
+  select(provider_id, measure, period, denominator) %>%
+  pivot_wider(names_from = period, names_glue= "{.value}_{period}", values_from= denominator) %>%
+  mutate(across(contains("denom"), ~ifelse(is.na(.x)|.x==0, "N/A", paste0("N=", prettyNum(.x, big.mark = ","))))) %>%
+  select(provider_id, measure, contains("3"), contains("2"), contains("1")) %>%
+  cbind("", "", "", "", "", "") %>% 
+  set_colnames(colnames(annual))
+
+#Table 3
+table3_data <- annual %>%
+  filter(measure=="OP-22") %>%
+  bind_rows(annual_denoms) %>%
+  mutate(rate_1= ifelse(provider_id %in% nomou_op22_p1, "#", rate_1), #deals with missing MOU
+         rate_2= ifelse(provider_id %in% nomou_op22_p2, "#", rate_2),
+         rate_3= ifelse(provider_id %in% nomou_op22, "#", rate_3)) %>%        
+  select(-provider_id) %>%
+  mutate(measure= ifelse(st_report=="", "", measure)) %>%
+  cbind(text= c("Patient Left Without Being Seen", "Number of Patients (N)")) %>%
+  select(measure, text, rate_1, rate_2, rate_3, everything()) %>%
+  set_colnames(c(" ", "Emergency Department – Annual Measure", p1_op22, p2_op22, p3_op22, "# CAHs Reporting",
+                 "CAH Overall Rate", "90th Percentile", "# CAHs Reporting","CAH Overall Rate", "CAH Overall Rate")) #edited 11/19
+
+table3 <- kable(table3_data, format = "latex", booktabs = TRUE, linesep="", align = c("l", "l", rep("c", 9))) %>%
+  kable_styling(latex_options = c("basic","scale_down", "HOLD_position"), position = "center", font_size = 11) %>%
+  add_header_above(c(" "=2, "Your Hospital's Performance by  \nCalendar Year"=3, "State Current Year"=3,
+                     "National Current Year"=2, "Bench-\nmark"=1), color = "#000000", bold = TRUE) %>% #edited 11/19
+  column_spec(1, width = "3cm") %>%
+  column_spec(2, width = "5.5cm") %>%
+  column_spec(3:11, width = "2.1cm") %>%
+  row_spec(1, background = "#ddf1f7")
+
+#Table 4
+table4_data <- annual %>%
+  filter(measure=="IMM-3") %>%
+  mutate(rate_1= ifelse(provider_id %in% nomou_imm3_p1, "#", rate_1), #deal with missing MOU
+         rate_2= ifelse(provider_id %in% nomou_imm3_p2, "#", rate_2),
+         rate_3= ifelse(provider_id %in% nomou_imm3, "#", rate_3),
+         measure= "HCP/IMM-3") %>%        
+  select(-provider_id) %>%
+  cbind(text= c("Healthcare Provider Influenza Vaccination")) %>%
+  select(measure, text, rate_1, rate_2, rate_3, everything()) %>%
+  set_colnames(c(" ", "NHSN Immunization Measure", p1_imm3, p2_imm3, p3_imm3, "# CAHs Reporting",
+                 "CAH Overall Rate", "90th Percentile", "# CAHs Reporting","CAH Overall Rate", "CAH Overall Rate")) #edited 11/19
+
+table4 <- kable(table4_data, format = "latex", booktabs = TRUE, linesep="", align = c("l", "l", rep("c", 9))) %>%
+  kable_styling(latex_options = c("basic","scale_down", "HOLD_position"), position = "center", font_size = 11) %>%
+  add_header_above(c(" "=2, "Your Hospital's Reported Adherence  \nPercentage"=3, "State Current Flu Season"=3,
+                     "National Current\nFlu Season"=2, "Bench-\nmark"=1), color = "#000000", bold = TRUE) %>% #edited 11/19 
+  column_spec(1, width = "3cm") %>%
+  column_spec(2, width = "5.5cm") %>%
+  column_spec(3:11, width = "2.1cm") %>%
+  row_spec(1, background = "#ddf1f7")
+
+### ABS MEASURES (1 Table) ###
+abs_measures <- c("leadership", "accountability", "drug_expertise", "act", "track", "report", "educate", "core_elements_met")
+
+abs_right <- cah %>% 
+  filter(measure %in% abs_measures) %>%
+  filter(period== max(period)) %>%
+  select(measure, st_report, st_abs_rate, nat_report, nat_abs_rate, benchmark) #added benchmark 11/19
+
+abs_data <- cah %>% 
+  filter(measure %in% abs_measures,
+         period != 1) %>% #to deal with new ABS period 12/10
+  select(provider_id, measure, period, abs_met) %>%
+  pivot_wider(names_from = period, names_glue= "{.value}_{period}", values_from= abs_met) %>%
+  mutate(
+    across(contains("abs_met"), ~case_when(
+      measure != 'core_elements_met' & .x==1 ~ "Y",
+      measure != 'core_elements_met' & .x==0 ~ "N",
+      is.na(.x) ~ "N/A",
+      TRUE ~ as.character(.x))),
+    measure= factor(measure, levels= c("core_elements_met", "leadership", "accountability", "drug_expertise", "act",
+                                       "track", "report", "educate")),
+    abs_met_2= ifelse(provider_id %in% nomou_nhsn_p2, "#", abs_met_2), #edited 12/10
+    abs_met_3= ifelse(provider_id %in% nomou_nhsn, "#", abs_met_3)) %>%  #edited 12/10
+  select(-provider_id) %>%
+  arrange(measure) %>%
+  inner_join(abs_right, by= "measure") %>%
+  mutate(across(contains("report"), ~ifelse(is.na(.x), "N/A", prettyNum(.x, big.mark = ","))),
+         across(where(is.numeric)  & !contains("benchmark"), ~ifelse(is.na(.x), "N/A", rndup(.x))), #edited 11/19
+         benchmark= sprintf("%1.0f%%", as.numeric(benchmark))) %>% #added 11/19
+  cbind(name= c("Number of Elements Met", "Element 1: Leadership", "Element 2: Accountability", "Element 3: Drug Expertise",
+                "Element 4: Action", "Element 5: Tracking", "Element 6: Reporting", "Element 7: Education")) %>%
+  select(name, abs_met_2, abs_met_3, st_report:nat_abs_rate, benchmark) %>% #edited 11/19 and 12/10
+  set_colnames(c("Antibiotic Stewardship Measure – CDC Core Elements", p1_abs, p2_abs,
+                     "# CAHs Reporting","% of CAHs Meeting Element",
+                     "# CAHs Reporting","% of CAHs Meeting Element", "% of CAHs Meeting Element")) #edited 11/19
+
+table5 <- kable(abs_data, format = "latex", booktabs = TRUE, linesep="") %>%
+  kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(1,3,5,7), position = "center",
+                font_size = 11, stripe_color = "#ddf1f7") %>%
+  add_header_above(c(" "=1, "Your Hospital's Performance  \nby Survey Year"=2,
+                     "State Percentage for Current  \nSurvey Year"=2, "National Percentage for  \nCurrent Survey Year"=2, 
+                     "Benchmark"=1), color = "#000000", bold = TRUE) %>% 
+  column_spec(1, width = "5cm") %>%
+  column_spec(2:8, width = "2.6cm")
+
+```
+
+
+The Medicare Beneficiary Quality Improvement Program (MBQIP) focuses on quality improvement efforts in the 45 states that participate in the Medicare Rural Hospital Flexibility (Flex) Program. Through Flex, MBQIP supports more than 1,350 small hospitals certified as rural Critical Access Hospitals (CAHs) in voluntarily reporting quality measures that are aligned with those collected by the Centers for Medicare and Medicaid Services (CMS) and other Federal programs.   
+The Federal Office of Rural Health Policy (FORHP) tasked the Flex Monitoring Team with producing a set of hospital-level reports for the core MBQIP measures. 
+Measures Included In This Report by MBQIP Domain:
+\vspace{-4truemm}
+	Domain: Emergency Department
+*	Emergency Department Transfer Communication (EDTC) (quarterly measure, updated each quarter)
+*	OP-18b – Median Time from ED Arrival to ED Departure for Discharged ED Patients (quarterly measure, updated each quarter)
+*	OP-22 – Patient Left Without Being Seen (annual measure, updated in QX)
+
+\vspace{-4truemm}
+Domain: Global Measures
+*	CAH Quality Infrastructure (annual measure, updated in QX)
+*	Hospital Commitment to Health Equity (annual measure, updated in QX)
+
+\vspace{-4truemm}
+
+Domain: Patient Safety
+*	HCP/IMM-3 (annual measure, updated in QX)
+*	Antibiotic Stewardship (annual measure, updated in QX)
+*	Safe Use of Opioids (annual measure, updated in QX)
+
+\vspace{-4truemm}
+	Domain: Care Coordination
+*	Hybrid Hospital-Wide Readmission (annual measure, updated in QX)
+*	Social Determinants of Health Screening (annual measure, updated in QX) 
+*	Social Determinants of Health Screening Positive (annual measure, updated in QX)
+
+\vspace{-4truemm}
+Data for the Patient Experience MBQIP Domain (HCAHPS data) are released separately each quarter in HCAHPS Reports. For more information regarding the data and calculations, please 
+reference the Appendix at the end of this document.
+
+\newpage
+
+# `r kableExtra::text_spec(hospinfo, color="black")`
+\vspace{-4truemm}
+## `r kableExtra::text_spec(hospgeo, color="black")`
+\vspace{-2truemm}
+
+\begin{center}
+\textbf{MBQIP Measures Hospital Report} \linebreak[1] `r report_period` 
+\end{center}
+\vspace{-8truemm}
+\begin{center}
+Generated on `r format(Sys.time(),"%m/%d/%y")`
+\end{center}
+\vspace{-4truemm}
+
+**Emergency Department – Emergency Department Transfer Communication (EDTC)**
+```{r edtc table, echo=FALSE, results="markup", message=FALSE, warning=FALSE, include=TRUE}
+edtc_table
+```
+
+“N/A” indicates that the CAH did not submit any data.   
+$\#$ indicates that the CAH did not have a signed MOU at the time of reporting for this period.
+
+\newpage
+
+**Emergency Department – OP-18b**
+
+```{r op18 table}
+table2
+```
+

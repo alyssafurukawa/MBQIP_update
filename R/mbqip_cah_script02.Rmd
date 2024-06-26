@@ -16,20 +16,137 @@ load(paste0(fmt_folder, "MBQIP Reports/Quarterly Reports/EDTC/2024_Q1/R/Data/edt
 
 load(paste0(fmt_folder, "MBQIP Reports/Quarterly Reports/OPIP/2023_Q4/R/Data/opipdata_2023_Q4_2024-06-14.RData"))
 
+## filter out the old measures in opip to cut down on the size of this dataset
+opip_current_measures3 <- opip_master_data |> 
+  filter(measure %ni% c(hai_measure ,"OP-2","OP-3b"))
+
+
 load(here::here("data/main_assessment_data_2024-06-12.RData"))
 ##2024-06-18: going to have to make sure to change this data name from "full data" in the future BEFORE saving but for now
 
+
+
 ##2024-06-18: need the cah data to do the cah reports, above is only state 
+
+infra_cah <- c(crit_lead1:crit_use4,)
+
 assessment_cah_data <-  haven::read_sas(here("data/assessment_final.sas7bdat")) |> 
-  clean_names() 
+  clean_names() |> 
+  select(ccn:cahzip , mou, starts_with("elem_") ) ##2024-06-25: 1 = yes, 2 = no, based on MOU column , double check -af 
  
-assessment_state_data <-  full_data
+assessment_state_data <-  full_data 
 ```
 
 join opip edtc and assessment data?
 ```{r}
+## 2024-06-20: if i join all three i get 300,000+ obs and 500 variables and I just think there's probably an easier/better way especially since I am getting the "many to many relationship" warning when I join OPIP -af
+## 2024-06-24: opip has 77k obs, I can filter out old measures (OP2/OP3) and deselect columns so they match on ID, state, zip? instead of many to many, but I think the many to many is also because the data isn't tidy aka there's multiple rows per CAH? but there's still no reason for the 77k obs to turn into 300k when joined with assessment (1370) and edtc (5365)... is it easier to just keep them separate and call each dataset separately? or combine assessment and edtc but leave opip? -af
+## 2024-06-25: okay so by matching on PERIOD it takes us from 300k+ obs to 77k which is roughly similar to the opip original data... need to make sure it's not going to cause problems in trying to write the different tables etc -af  
 main_mbqip_data <- assessment_cah_data |> 
-  full_join(edtc_main_data , by )
+  full_join(edtc_main_data , join_by(ccn == medicare_number  , 
+                                     cah_name,
+                                     cah_state,
+                                     cahzip ,
+                                     cah_city) ) |> 
+  rename(
+         edtc_st_denom = st_denom ,
+         edtc_st_report = st_report ,
+         edtc_report = report )
+ 
 
+full_mbqip_data <- opip_master_data |> 
+    rename(
+         opip_st_denom = st_denom ,
+         opip_st_report = st_report ,
+         opip_report = report ) |> 
+  full_join(main_mbqip_data , join_by(provider_id ,
+                                      medicare_number == ccn, 
+                                     cah_name,
+                                     cah_state,
+                                     cahzip ,
+                                     cah_city ,
+                                     period ,
+                                     state_name
+                                     ))
+
+dput(colnames(edtc_main_data))
+dput(colnames(opip_master_data))
+dput(colnames(full_mbqip_data))
+dput(colnames(main_mbqip_data))
+
+##2024-06-25: opip and edtc have a couple of colnames that are the same, is there a way to merge them without causing problems??? -af 
+
+
+```
+make pdf reports
+```{r}
+
+dir.create(glue::glue("C:/Users/furuk015/Desktop/projects/MBQIP_update/reports/{quarter}"))
+report_directory <- glue::glue("C:/Users/furuk015/Desktop/projects/MBQIP_update/reports/{quarter}")
+
+##2024-06-24: if i keep the datasets as they are and use the existing templates to do the new templtes, i just need to make sure the periods are labeled correctly across the various portions, which is also going to include asking megan if the quarters are always going to be misaligned in the reports -af
+
+## this next section is EDTC period notation, simplified compared to OPIP 
+
+report_period <- "Quarter 1 - 2024"
+folder <- paste(str_sub(quarter, end=-3), str_sub(quarter, start=-2))
+
+p4 <- paste(str_sub(quarter, -2), str_sub(quarter, end=-3))
+p3 <- "Q4 2023"
+p2 <- "Q3 2023"
+p1 <- "Q2 2023"
+
+# bms <- readxl::read_xlsx(paste0(fmt_folder, "MBQIP Reports/Report Creation and Processes/Report Benchmarks_10_04_23.xlsx")) %>%
+  #filter(str_detect(measure, "edtc")) ## 2024-06-24: okay we're going to need to address the benchmarks notation because bms here is JUST edtc and not opip, can I just call the benchmarks in general and then filter in the template when I need edtc or opip? -af 
+
+bms <- readxl::read_xlsx(paste0(fmt_folder, "MBQIP Reports/Report Creation and Processes/Report Benchmarks_10_04_23.xlsx"))  |> 
+  mutate(measure= case_when(
+    measure=="leader" ~ "leadership",
+    measure=="account" ~ "accountability",
+    measure=="drug" ~ "drug_expertise",
+    measure=="action" ~ "act",
+    measure=="edu" ~ "educate",
+    measure=="all" ~ "core_elements_met",
+    TRUE ~ measure)) 
+
+## OPIP period notations below, they have specifications after the underscore which is different than EDTC 
+
+p4_q <- "Q4 2023"
+
+
+p3_op22 <- "CY 2023" 
+p2_op22 <- "CY 2022"
+p1_op22 <- "CY 2021"
+
+p3_imm3 <- "4Q23 - 1Q24"
+p2_imm3 <- "4Q22 - 1Q23" ## these are updated in Q4 I believe
+p1_imm3 <- "4Q21 - 1Q22"
+
+
+p2_abs <- "Survey Year 2023" #the current year
+## 11 nov 22: seems like when this says 'the current year' what they meant was 'the most recent year of ABS data' which here appears to be 2021 not 2022 , needs to be updated in Q4 -af 
+p1_abs <- "Survey Year 2022"
+
+
+
+#CAH Reports
+for (st in states){
+  state_data <- full_mbqip_data %>% filter(cah_state== st)
+  cah_list <- unique(state_data$medicare_number) #this will be affected if any medicare # is missing a 0...
+  ncah <- length(cah_list)
+  dir.create(paste0(report_directory ,"/",st))
+  for (i in cah_list){
+    cah <- state_data %>% filter(medicare_number== i)
+    cah_id <- unique(cah$medicare_number)  #these create various report values
+    name <- cah %>% filter(period==max(period)) %>% select(cah_name) %>% unlist(use.names = FALSE) #unique isn't ideal here
+    hospinfo <- paste0(cah_id, ": ", name)
+    hospgeo <- paste0(unique(cah$cah_city), ", ", unique(cah$cah_state), ", ", unique(cah$cahzip))
+    rmarkdown::render(input = "C:/Users/furuk015/Desktop/projects/MBQIP_update/R/mbqip_measures_cah_template.Rmd",
+                    
+                      output_format = "pdf_document",
+                      output_file = paste0(st,"_",cah_id,"_",name,"_MBQIP_",quarter,".pdf"),
+                      output_dir = paste0(report_directory,"/",st)) 
+    }
+}
 ```
 
