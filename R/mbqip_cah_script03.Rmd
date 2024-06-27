@@ -1,0 +1,276 @@
+---
+title: "mbqip_measures_script02"
+author: "alyssa furukawa"
+date: "2024-06-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(FMT2)
+librarian("reports")
+library(gt)
+roboto <- function(){
+  sysfonts::font_add(family="Roboto Condensed", regular="C:/Users/furuk015/AppData/Local/Microsoft/Windows/Fonts/RobotoCondensed-Regular.ttf")
+  showtext::showtext_auto()
+}
+roboto()
+
+librarian("reports")
+library(weights)
+library(huxtable)
+library(gridExtra)
+library(here)
+library(htmlTable)
+library(gt)
+
+
+#renv::init()
+
+options(scipen = 999)
+```
+
+importing EDTC, OPIP, assessment data 
+
+```{r}
+load(paste0(fmt_folder, "MBQIP Reports/Quarterly Reports/EDTC/2024_Q1/R/Data/edtcdata_2024_Q1_2024-05-21.RData"))
+
+edtc_main_data <- edtc_master_data
+
+load(paste0(fmt_folder, "MBQIP Reports/Quarterly Reports/OPIP/2023_Q4/R/Data/opipdata_2023_Q4_2024-06-14.RData"))
+
+## filter out the old measures in opip to cut down on the size of this dataset
+
+
+#OP/IP measures-- any changes here will affect spreadsheet formatting
+
+#OP/IP measures-- any changes here will affect spreadsheet formatting
+rates <- c("IMM-3", "OP-22") #have to calculate % = numerator/denominator
+medians <- c("OP-18b") #already have median time = numerator
+hai_measure <- c("CAUTI","CDIFF","CLABSI","MRSABLD","SSICOLO","SSIHYST")
+abs <- c("leadership", "accountability", "drug_expertise", "act", "track", "report", "educate", "core_elements_met")
+ps_measures <- c("OP-18b")
+opip_current_measures3 <- opip_master_data |> 
+  filter(measure %ni% c(hai_measure ,"OP-2","OP-3b"))
+
+
+load(here::here("data/main_assessment_data_2024-06-12.RData"))
+##2024-06-18: going to have to make sure to change this data name from "full data" in the future BEFORE saving but for now
+
+assessment_state_data <-  full_data 
+
+
+##2024-06-18: need the cah data to do the cah reports, above is only state 
+
+assessment_cah_data <-  haven::read_sas(here("data/assessment_final.sas7bdat")) |> 
+  clean_names() |> 
+  select(ccn:cahzip , mou, starts_with("elem_") ) ##2024-06-25: 1 = yes, 2 = no, based on MOU column , double check -af 
+ 
+```
+
+```{r}
+quarter <- "Q4 2023"
+p3_q <- "Q3 2023"
+p2_q <- "Q2 2023"
+p1_q <- "Q1 2023"
+#^ Update everything above manually each quarter ^
+
+
+
+#MOU list
+## check for most recent 
+list <- readxl::read_xlsx(paste0(FMT2::fmt_folder, "MBQIP Reports/CAH List with MOU_FMT 6.11.24.xlsx"), sheet = "CAHs with MOU") |> 
+  clean_names() %>%
+  mutate(provider_id= as.numeric(medicare_number)) %>%
+  filter(is.na(medicare_number)==FALSE)
+
+moulist <- list %>%
+  select(provider_id, medicare_number, cah_name, cah_city, cah_state, cahzip)
+
+nrow(moulist) #1349
+
+no_moulist <- list %>%
+  filter(!is.na(quarterly_measures)) %>%
+  select(provider_id, quarterly=quarterly_measures, abs= abs_q3, imm3= imm_3_q4, op22= op_22_q4) %>%
+  mutate(quarterly= str_remove(quarterly, "Start "),
+         quarterly= as.numeric(paste0(str_sub(quarterly, 4), str_sub(quarterly, 2, 3))))
+
+#CAHs with no MOU for this period --- can't use their data but need to have a report
+#QUARTERLY MEASURES (no manual changes needed)
+nomou_quarterly <- no_moulist %>% #Q4 2023
+  filter(quarterly > as.numeric(paste0(str_sub(quarter, 4), str_sub(quarter, 2, 3)))) %>%
+  pull(provider_id)
+
+nomou_p3 <- no_moulist %>% #Q3 2023
+  filter(quarterly > as.numeric(paste0(str_sub(p3_q, 4), str_sub(p3_q, 2, 3)))) %>%
+  pull(provider_id)
+
+nomou_p2 <- no_moulist %>% #Q2 2023
+  filter(quarterly > as.numeric(paste0(str_sub(p2_q, 4), str_sub(p2_q, 2, 3)))) %>%
+  pull(provider_id)
+
+nomou_p1 <- no_moulist %>% #Q1 2023
+  filter(quarterly > as.numeric(paste0(str_sub(p1_q, 4), str_sub(p1_q, 2, 3)))) %>%
+  pull(provider_id)
+
+#ANNUAL MEASURE (manual updates may be needed; refer to OPIP Report Checklist/notes below for which measures should be updated when)
+#IMM-3:UPDATE Q4 only; currently need 19-20, 20-21, 21-22 for report
+
+nomou_imm3 <- no_moulist %>% filter(imm3 > 2023) %>% pull(provider_id) #22-23
+nomou_imm3_p2 <- no_moulist %>% filter(imm3 > 2022) %>% pull(provider_id) #21-22
+nomou_imm3_p1 <- no_moulist %>% filter(imm3 > 2021) %>% pull(provider_id) #20-21
+
+#ABS: UPDATE Q3, Q4. Only update nhsn year in Q4; need 2020, 2021, 2022 for report
+nomou_nhsn <- no_moulist %>% filter(abs > 2023) %>% pull(provider_id) #2022
+nomou_nhsn_p2 <- no_moulist %>% filter(abs > 2022) %>% pull(provider_id) #2021
+nomou_nhsn_p1 <- no_moulist %>% filter(abs > 2021) %>% pull(provider_id) #2020
+
+#OP-22: UPDATE THIS Q (Q4 only); need 2019, 2020, 2021 for report
+nomou_op22 <- no_moulist %>% filter(op22 > 2023) %>% pull(provider_id) #2022
+nomou_op22_p2 <- no_moulist %>% filter(op22 > 2022) %>% pull(provider_id) #2021
+nomou_op22_p1 <- no_moulist %>% filter(op22 > 2021) %>% pull(provider_id) #2020
+
+#recently closed CAHs- will remove data for all periods and won't generate CAH report
+closed <- c(451345 , 281321 , 421303 , 151335 , 451360 , 441311 ,
+371324 ,
+231317 ,
+191303 ,
+171340 , 
+151302 ,
+441324 ,
+281330 ,
+251329 ,
+251306 ,
+261315 ,
+041304 
+
+)
+closed %in% moulist$provider_id #make sure there aren't new CAHs with these numbers
+```
+
+
+join opip edtc and assessment data?
+```{r}
+## 2024-06-20: if i join all three i get 300,000+ obs and 500 variables and I just think there's probably an easier/better way especially since I am getting the "many to many relationship" warning when I join OPIP -af
+## 2024-06-24: opip has 77k obs, I can filter out old measures (OP2/OP3) and deselect columns so they match on ID, state, zip? instead of many to many, but I think the many to many is also because the data isn't tidy aka there's multiple rows per CAH? but there's still no reason for the 77k obs to turn into 300k when joined with assessment (1370) and edtc (5365)... is it easier to just keep them separate and call each dataset separately? or combine assessment and edtc but leave opip? -af
+## 2024-06-25: okay so by matching on PERIOD it takes us from 300k+ obs to 77k which is roughly similar to the opip original data... need to make sure it's not going to cause problems in trying to write the different tables etc -af  
+main_mbqip_data <- assessment_cah_data |> 
+  full_join(edtc_main_data , join_by(ccn == medicare_number  , 
+                                     cah_name,
+                                     cah_state,
+                                     cahzip ,
+                                     cah_city) ) |> 
+  rename(medicare_number = ccn
+         # edtc_st_denom = st_denom ,
+         # edtc_st_report = st_report ,
+         # edtc_report = report 
+         )
+ 
+## does it make more sense to leave all three as separate datasets and pull the state/CAH numbers from the MOUlist instead of "state_data"? and then within the template I can use the different datasets to make their own charts? 
+# full_mbqip_data <- opip_master_data |> 
+#     rename(
+#          opip_st_denom = st_denom ,
+#          opip_st_report = st_report ,
+#          opip_report = report ) |> 
+#   full_join(main_mbqip_data , join_by(provider_id ,
+#                                       medicare_number == ccn, 
+#                                      cah_name,
+#                                      cah_state,
+#                                      cahzip ,
+#                                      cah_city ,
+#                                      period ,
+#                                      state_name
+#                                      ))
+
+## adding the state level assessment data to the main data to see if that makes the tables easier 
+## 2024-06-27: i actually think it makes it worse and that I should join it after I filter out the CAHs (aka within the template) -af
+#main_mbqip_data <- main_mbqip_data |> 
+  #full_join(full_data , join_by(cah_state == state_abbr))
+
+## looking at the column names for joins and potential issues 
+# dput(colnames(edtc_main_data))
+# dput(colnames(opip_master_data))
+# dput(colnames(full_mbqip_data))
+# dput(colnames(main_mbqip_data))
+
+##2024-06-25: opip and edtc have a couple of colnames that are the same, is there a way to merge them without causing problems??? -af 
+
+
+```
+make pdf reports
+```{r}
+
+dir.create(glue::glue("C:/Users/furuk015/Desktop/projects/MBQIP_update/reports/{quarter}"))
+report_directory <- glue::glue("C:/Users/furuk015/Desktop/projects/MBQIP_update/reports/{quarter}")
+
+##2024-06-24: if i keep the datasets as they are and use the existing templates to do the new templtes, i just need to make sure the periods are labeled correctly across the various portions, which is also going to include asking megan if the quarters are always going to be misaligned in the reports -af
+
+## this next section is EDTC period notation, simplified compared to OPIP 
+
+report_period <- "Quarter 1 - 2024"
+folder <- paste(str_sub(quarter, end=-3), str_sub(quarter, start=-2))
+
+p4 <- paste(str_sub(quarter, -2), str_sub(quarter, end=-3))
+p3 <- "Q4 2023"
+p2 <- "Q3 2023"
+p1 <- "Q2 2023"
+
+# bms <- readxl::read_xlsx(paste0(fmt_folder, "MBQIP Reports/Report Creation and Processes/Report Benchmarks_10_04_23.xlsx")) %>%
+  #filter(str_detect(measure, "edtc")) ## 2024-06-24: okay we're going to need to address the benchmarks notation because bms here is JUST edtc and not opip, can I just call the benchmarks in general and then filter in the template when I need edtc or opip? -af 
+
+bms <- readxl::read_xlsx(paste0(fmt_folder, "MBQIP Reports/Report Creation and Processes/Report Benchmarks_10_04_23.xlsx"))  |> 
+  mutate(measure= case_when(
+    measure=="leader" ~ "leadership",
+    measure=="account" ~ "accountability",
+    measure=="drug" ~ "drug_expertise",
+    measure=="action" ~ "act",
+    measure=="edu" ~ "educate",
+    measure=="all" ~ "core_elements_met",
+    TRUE ~ measure)) 
+
+## OPIP period notations below, they have specifications after the underscore which is different than EDTC 
+
+p4_q <- "Q4 2023"
+p3_q <- "Q3 2023"
+p2_q <- "Q2 2023"
+p1_q <- "Q1 2023"
+
+p3_op22 <- "CY 2023" 
+p2_op22 <- "CY 2022"
+p1_op22 <- "CY 2021"
+
+p3_imm3 <- "4Q23 - 1Q24"
+p2_imm3 <- "4Q22 - 1Q23" ## these are updated in Q4 I believe
+p1_imm3 <- "4Q21 - 1Q22"
+
+
+p2_abs <- "Survey Year 2023" #the current year
+## 11 nov 22: seems like when this says 'the current year' what they meant was 'the most recent year of ABS data' which here appears to be 2021 not 2022 , needs to be updated in Q4 -af 
+p1_abs <- "Survey Year 2022"
+
+
+
+#CAH Reports
+for (st in states){
+  state_data <- main_mbqip_data %>% filter(cah_state== st) ##2024-06-26: attempting to do edtc/assessment separate from opip dataset 
+  opip_state_data <- opip_master_data
+  cah_list <- unique(state_data$medicare_number) #this will be affected if any medicare # is missing a 0...
+  ncah <- length(cah_list)
+  dir.create(paste0(report_directory ,"/",st))
+  for (i in cah_list){
+    cah <- state_data %>% filter(medicare_number== i)
+    opip_cah <- opip_state_data |> filter(medicare_number== i)
+    cah_id <- unique(cah$medicare_number)  #these create various report values
+    name <- cah %>% filter(period==max(period)) %>% select(cah_name) %>% unlist(use.names = FALSE) #unique isn't ideal here
+    hospinfo <- paste0(cah_id, ": ", name)
+    hospgeo <- paste0(unique(cah$cah_city), ", ", unique(cah$cah_state), ", ", unique(cah$cahzip))
+    rmarkdown::render(input = "C:/Users/furuk015/Desktop/projects/MBQIP_update/R/mbqip_measures_cah_template_02.Rmd",
+                    
+                      output_format = "pdf_document",
+                      output_file = paste0(st,"_",cah_id,"_",name,"_MBQIP_",quarter,".pdf"),
+                      output_dir = paste0(report_directory,"/",st)) 
+    }
+}
+```
+
